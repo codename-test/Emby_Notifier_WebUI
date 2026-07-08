@@ -10,6 +10,7 @@ import time
 import signal
 import sys
 import os
+import logging
 
 import log
 import db
@@ -102,6 +103,15 @@ def main():
     # 1. 初始化数据库
     log.logger.info("Initializing database...")
     db.init_db()
+
+    # 1.5 从数据库读取日志等级并应用
+    log_level = db.get_log_level()
+    if log_level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+        log.logger.setLevel(getattr(logging, log_level))
+        for h in log.logger.handlers:
+            h.setLevel(getattr(logging, log_level))
+    log.setup_db_logging()
+    log.logger.info(f"Log level set to: {log_level}")
 
     # 2. 启动端口管理器
     pm = port_manager.PortManager()

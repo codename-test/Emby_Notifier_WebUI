@@ -40,6 +40,7 @@ def init_db():
             server_type TEXT NOT NULL DEFAULT 'Emby',
             server_url TEXT DEFAULT '',
             wechat_config_id INTEGER,
+            template_id INTEGER DEFAULT 1,
             send_targets TEXT DEFAULT '[]',
             enabled INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -88,15 +89,61 @@ def init_db():
             error TEXT,
             FOREIGN KEY (port_id) REFERENCES ports(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            level TEXT NOT NULL DEFAULT 'INFO',
+            module TEXT DEFAULT '',
+            message TEXT NOT NULL,
+            port_id INTEGER DEFAULT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+        CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+
+        CREATE TABLE IF NOT EXISTS push_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            picurl_movie TEXT DEFAULT 'media_backdrop',
+            picurl_episode TEXT DEFAULT 'media_still',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     # Ensure DND settings row exists
     conn.execute(
         "INSERT OR IGNORE INTO dnd_settings (id, enabled, start_time, end_time) "
         "VALUES (1, 0, '23:00', '07:00')"
     )
+    # Ensure default LOG_LEVEL exists
+    conn.execute(
+        "INSERT OR IGNORE INTO system_config (key, value) VALUES ('LOG_LEVEL', 'INFO')"
+    )
+    # Ensure default push templates exist
+    count = conn.execute("SELECT COUNT(*) FROM push_templates").fetchone()[0]
+    if count == 0:
+        conn.execute(
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode) "
+            "VALUES (1, '标准', '{type}更新', "
+            "'{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', "
+            "'media_backdrop', 'media_still')"
+        )
+        conn.execute(
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode) "
+            "VALUES (2, '简化通用', '更新通知', "
+            "'{name} ({year}){episode}\n\n {date}\n⭐ {rating}', "
+            "'', '')"
+        )
+    else:
+        # 迁移旧模板
+        conn.execute("UPDATE push_templates SET name='标准', title='{type}更新', description='{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', picurl_movie='media_backdrop', picurl_episode='media_still' WHERE id=1")
+        conn.execute("UPDATE push_templates SET name='简化通用', title='更新通知', description='{name} ({year}){episode}\n\n {date}\n⭐ {rating}', picurl_movie='', picurl_episode='' WHERE id=2")
+        # 删除旧的剧集更新模板（id=3 如果存在）
+        conn.execute("DELETE FROM push_templates WHERE id=3")
     conn.commit()
     log.logger.info(f"Database initialized at {DB_PATH}")
-
 
 # ──────────────────────────────────────────────
 #  Port CRUD
@@ -126,23 +173,23 @@ def get_port_by_number(port_number):
     return dict(row) if row else None
 
 
-def create_port(port_number, server_name, server_type="Emby", server_url="", wechat_config_id=None, send_targets=None):
+def create_port(port_number, server_name, server_type="Emby", server_url="", wechat_config_id=None, send_targets=None, template_id=1):
     conn = _get_conn()
     try:
         send_targets_json = json.dumps(send_targets) if send_targets else "[]"
         cursor = conn.execute(
-            "INSERT INTO ports (port, server_name, server_type, server_url, wechat_config_id, send_targets) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (port_number, server_name, server_type, server_url, wechat_config_id, send_targets_json),
+            "INSERT INTO ports (port, server_name, server_type, server_url, wechat_config_id, send_targets, template_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (port_number, server_name, server_type, server_url, wechat_config_id, send_targets_json, template_id),
         )
         conn.commit()
         port_id = cursor.lastrowid
         # Auto-create default channel entries
-        for ch in ["wechat_work", "telegram", "bark"]:
+        for ch, default_enabled in [("wechat_work", 1), ("telegram", 0), ("bark", 0)]:
             conn.execute(
                 "INSERT OR IGNORE INTO channels (port_id, channel_type, enabled, config) "
-                "VALUES (?, ?, 0, '{}')",
-                (port_id, ch),
+                "VALUES (?, ?, ?, '{}')",
+                (port_id, ch, default_enabled),
             )
         conn.commit()
         log.logger.info(f"Port created: id={port_id}, port={port_number}, name={server_name}")
@@ -154,7 +201,7 @@ def create_port(port_number, server_name, server_type="Emby", server_url="", wec
 
 def update_port(port_id, **kwargs):
     conn = _get_conn()
-    allowed = {"port", "server_name", "server_type", "server_url", "wechat_config_id", "send_targets", "enabled"}
+    allowed = {"port", "server_name", "server_type", "server_url", "wechat_config_id", "send_targets", "enabled", "template_id"}
     fields = {}
     for k, v in kwargs.items():
         if k in allowed and v is not None:
@@ -442,5 +489,107 @@ def delete_wechat_config(config_id):
     """删除企业微信配置组"""
     conn = _get_conn()
     conn.execute("DELETE FROM wechat_configs WHERE id = ?", (config_id,))
+    conn.commit()
+
+
+# ──────────────────────────────────────────────
+#  Logs
+# ──────────────────────────────────────────────
+
+def add_log(level, message, module="", port_id=None):
+    """写入一条日志，自动清理超过 10000 条的旧记录"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO logs (level, message, module, port_id) VALUES (?, ?, ?, ?)",
+        (level, message, module, port_id)
+    )
+    # 保留最近 10000 条
+    conn.execute("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 10000)")
+    conn.commit()
+
+
+def get_logs(level=None, limit=200, offset=0, port_id=None):
+    """查询日志，按时间倒序"""
+    conn = _get_conn()
+    sql = "SELECT * FROM logs WHERE 1=1"
+    params = []
+    if level:
+        sql += " AND level = ?"
+        params.append(level)
+    if port_id is not None:
+        sql += " AND port_id = ?"
+        params.append(port_id)
+    sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_logs():
+    """清空所有日志"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM logs")
+    conn.commit()
+
+
+def get_log_level():
+    """获取当前日志等级"""
+    return get_system_config("LOG_LEVEL") or "INFO"
+
+
+def set_log_level(level):
+    """设置日志等级"""
+    set_system_config("LOG_LEVEL", level)
+
+
+# ──────────────────────────────────────────────
+#  Push Templates
+# ──────────────────────────────────────────────
+
+def get_templates():
+    """获取所有推送模板"""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM push_templates ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_template(template_id):
+    """获取单个模板"""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM push_templates WHERE id=?", (template_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_template(name, title, description, picurl_movie="media_backdrop", picurl_episode="media_still"):
+    """创建推送模板"""
+    conn = _get_conn()
+    cursor = conn.execute(
+        "INSERT INTO push_templates (name, title, description, picurl_movie, picurl_episode) VALUES (?, ?, ?, ?, ?)",
+        (name, title, description, picurl_movie, picurl_episode)
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def update_template(template_id, **kwargs):
+    """更新推送模板"""
+    conn = _get_conn()
+    allowed = {"name", "title", "description", "picurl_movie", "picurl_episode"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k}=?" for k in fields)
+    conn.execute(
+        f"UPDATE push_templates SET {set_clause} WHERE id=?",
+        (*fields.values(), template_id),
+    )
+    conn.commit()
+    return True
+
+
+def delete_template(template_id):
+    """删除推送模板"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM push_templates WHERE id=?", (template_id,))
     conn.commit()
 

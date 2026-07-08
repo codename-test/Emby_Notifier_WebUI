@@ -8,6 +8,7 @@ Sender 模块 - 管理每个端口的推送渠道。
 import os
 import json
 import log
+import db
 import wxapp
 import tgbot
 import bark
@@ -32,6 +33,28 @@ class PortSender:
         for ch in enabled_channels:
             ch_type = ch["channel_type"]
             ch_config = ch.get("config", {})
+            
+            # 企业微信：将 wechat_config_id 解析为实际凭证
+            if ch_type == "wechat_work":
+                wc_id = ch_config.get("wechat_config_id")
+                if wc_id:
+                    try:
+                        wc_id_int = int(wc_id)
+                    except (ValueError, TypeError):
+                        wc_id_int = None
+                    if wc_id_int:
+                        wc = db.get_wechat_config(wc_id_int)
+                        if wc:
+                            ch_config = {
+                                "corp_id": wc["corp_id"],
+                                "corp_secret": wc["corp_secret"],
+                                "agent_id": wc["agent_id"],
+                                "wechat_config_id": str(wc_id_int),
+                                "user_id": "@all",
+                            }
+                        else:
+                            log.logger.warning(f"[Port {port_id}] WeChat config {wc_id} not found")
+            
             self.channels[ch_type] = ch_config
             log.logger.info(f"[Port {port_id}] Channel enabled: {ch_type}")
 
@@ -118,53 +141,51 @@ class PortSender:
         cfg = self.channels["wechat_work"]
         access_token = self._get_wechat_token()
 
-        msg_type = os.getenv("WECHAT_MSG_TYPE", "text")
-        server_url = media.get("server_url", "")
-        
-        # 构建标题
-        type_ch = "电影" if media["media_type"] == "Movie" else "剧集"
-        title = f"[{type_ch}] {media['media_name']}"
-        if media["media_type"] == "Episode":
-            title += f" S{media['tv_season']}E{media['tv_episode']} {media.get('tv_episode_name', '')}"
-        
-        # 构建描述
-        desc = (
-            f"评分: {media['media_rating']}  上映: {media['media_rel']}\n\n"
-            f"{media['media_intro'][:120]}..."
-        )
-        link = media.get("media_tmdburl", server_url)
-        poster = media.get("media_poster", "")
+        # 从端口配置获取模板
+        port = db.get_port(self.port_id)
+        template = db.get_template(port.get("template_id", 1)) if port else None
+        if not template:
+            template = db.get_template(1)  # 默认影视更新
 
-        if msg_type == "news":
-            wxapp.send_news(
-                access_token,
-                cfg.get("user_id", "@all"),
-                int(cfg.get("agent_id", 0)),
-                title,
-                desc,
-                link,
-                poster,
-            )
-        else:
-            content = (
-                f"#影视更新 #{media['server_name']}\n"
-                f"[{type_ch}]\n"
-                f"片名: {media['media_name']} ({media['media_rel'][:4]})\n"
-            )
-            if media["media_type"] == "Episode":
-                content += f"已更新至 第{media['tv_season']}季 第{media['tv_episode']}集\n"
-            content += (
-                f"评分: {media['media_rating']}\n"
-                f"上映日期: {media['media_rel']}\n\n"
-                f"内容简介: {media['media_intro']}\n\n"
-                f"相关链接: {media['media_tmdburl']}"
-            )
-            wxapp.send_text(
-                access_token,
-                cfg.get("user_id", "@all"),
-                int(cfg.get("agent_id", 0)),
-                content,
-            )
+        # 准备变量
+        type_ch = "电影" if media.get("media_type") == "Movie" else "剧集"
+        year = media.get("media_rel", "")[:4] if media.get("media_rel") else ""
+        episode = ""
+        if media.get("media_type") == "Episode":
+            episode = f" 第{media.get('tv_season','')}季·第{media.get('tv_episode','')}集"
+        
+        vars_map = {
+            "type": type_ch,
+            "name": media.get("media_name", ""),
+            "year": year,
+            "episode": episode,
+            "date": media.get("media_rel", ""),
+            "rating": str(media.get("media_rating", "暂无")),
+            "intro": media.get("media_intro", ""),
+            "tmdb_url": media.get("media_tmdburl", ""),
+            "season": str(media.get("tv_season", "")),
+            "ep_num": str(media.get("tv_episode", "")),
+            "ep_name": media.get("tv_episode_name", ""),
+        }
+
+        title = template["title"].format(**vars_map) if template.get("title") else "更新通知"
+        desc = template["description"].format(**vars_map) if template.get("description") else str(media)
+        
+        # 封面图
+        pic_field = template.get("picurl_episode", "media_still") if media.get("media_type") == "Episode" else template.get("picurl_movie", "media_backdrop")
+        picurl = media.get(pic_field, "")
+
+        link = media.get("media_tmdburl", "")
+
+        wxapp.send_news(
+            access_token,
+            cfg.get("user_id", "@all"),
+            int(cfg.get("agent_id", 0)),
+            title,
+            desc,
+            link,
+            picurl or "",
+        )
 
     # ── Telegram ─────────────────────────────
 

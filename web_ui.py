@@ -45,7 +45,9 @@ def index():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", INDEX_JS)
@@ -58,13 +60,16 @@ def ports_page():
     ports = db.get_all_ports()
     wechat_configs = db.get_all_wechat_configs()
     from flask import render_template_string
-    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs)
+    templates = db.get_templates()
+    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs, templates=templates)
     html = BASE_TEMPLATE.replace("{title}", "端口管理") \
         .replace("{dashboard_active}", "") \
         .replace("{ports_active}", "active") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", PORTS_JS)
@@ -82,7 +87,9 @@ def dnd_page():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "active") \
         .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", DND_JS)
@@ -99,7 +106,9 @@ def queue_page():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "active") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", QUEUE_JS)
@@ -117,11 +126,54 @@ def wechat_page():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "active") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", WECHAT_JS)
     return html
+@app.route("/logs")
+def logs_page():
+    """系统日志页面"""
+    from flask import render_template_string
+    content_rendered = render_template_string(LOGS_CONTENT)
+    html = BASE_TEMPLATE.replace("{title}", "系统日志") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "") \
+        .replace("{logs_active}", "active") \
+        .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", LOGS_JS)
+    return html
+@app.route("/templates")
+def templates_page():
+    """推送模板页面"""
+    from flask import render_template_string
+    templates = db.get_templates()
+    content_rendered = render_template_string(TEMPLATES_CONTENT, templates=templates)
+    html = BASE_TEMPLATE.replace("{title}", "推送模板") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
+        .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "active") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", TEMPLATES_JS)
+    return html
+
+
+
+
+
+
 
 
 @app.route("/settings")
@@ -135,7 +187,9 @@ def settings():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
         .replace("{wechat_active}", "") \
+        .replace("{templates_active}", "") \
         .replace("{settings_active}", "active") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", SETTINGS_JS)
@@ -376,22 +430,12 @@ def api_test_push(port_id):
     if not channels:
         return jsonify({"error": "没有启用的推送渠道"}), 400
     
-    success_count = 0
-    error_count = 0
-    
-    for ch in channels:
-        try:
-            media.send_test_notification(ch, port["server_name"])
-            success_count += 1
-        except Exception as e:
-            error_count += 1
-            log.logger.error(f"Test push failed for channel {ch['channel_type']}: {e}")
-    
-    return jsonify({
-        "success": success_count,
-        "failed": error_count,
-        "total": len(channels)
-    })
+    try:
+        media.send_test_notification(port_id)
+        return jsonify({"success": 1, "failed": 0, "total": 1})
+    except Exception as e:
+        log.logger.error(f"Test push failed: {e}")
+        return jsonify({"error": str(e), "success": 0, "failed": 1, "total": 1}), 500
 
 
 # ──────────────────────────────────────────────
@@ -453,6 +497,49 @@ def api_test_tmdb():
         return jsonify({"success": True})
     else:
         return jsonify({"success": False, "error": "TMDB API 连接失败，请检查 Token 是否正确"})
+@app.route("/api/logs", methods=["GET"])
+def api_get_logs():
+    level = request.args.get("level")
+    limit = request.args.get("limit", 100, type=int)
+    logs = db.get_logs(level=level, limit=limit)
+    return jsonify(logs)
+
+@app.route("/api/logs", methods=["DELETE"])
+def api_clear_logs():
+    db.clear_logs()
+    return jsonify({"status": "cleared"})
+@app.route("/api/templates", methods=["GET"])
+def api_get_templates():
+    return jsonify(db.get_templates())
+
+@app.route("/api/templates", methods=["POST"])
+def api_create_template():
+    data = request.json
+    tid = db.create_template(
+        name=data.get("name", ""),
+        title=data.get("title", ""),
+        description=data.get("description", ""),
+        picurl_movie=data.get("picurl_movie", "media_backdrop"),
+        picurl_episode=data.get("picurl_episode", "media_still"),
+    )
+    return jsonify({"id": tid})
+
+@app.route("/api/templates/<int:template_id>", methods=["PUT"])
+def api_update_template(template_id):
+    data = request.json
+    db.update_template(template_id, **data)
+    return jsonify({"status": "updated"})
+
+@app.route("/api/templates/<int:template_id>", methods=["DELETE"])
+def api_delete_template(template_id):
+    db.delete_template(template_id)
+    return jsonify({"status": "deleted"})
+
+
+
+
+
+
 
 
 def create_app(pm=None):
@@ -542,7 +629,9 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             <a class="nav-link {ports_active}" href="/ports"><i class="bi bi-hdd-network"></i> 端口管理</a>
             <a class="nav-link {dnd_active}" href="/dnd"><i class="bi bi-moon-fill"></i> 勿扰设置</a>
             <a class="nav-link {queue_active}" href="/queue"><i class="bi bi-inbox"></i> 消息队列</a>
+            <a class="nav-link {logs_active}" href="/logs"><i class="bi bi-list-ul"></i> 系统日志</a>
             <a class="nav-link {wechat_active}" href="/wechat"><i class="bi bi-wechat"></i> 企业微信</a>
+            <a class="nav-link {templates_active}" href="/templates"><i class="bi bi-file-earmark-text"></i> 推送模板</a>
             <a class="nav-link {settings_active}" href="/settings"><i class="bi bi-gear-fill"></i> 系统设置</a>
         </div>
         <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;">
@@ -818,6 +907,14 @@ PORTS_CONTENT = """
                                 <textarea class="form-control" id="addPortTargets" rows="3" placeholder="用户ID或组ID，每行一个&#10;例如：&#10;@all&#10;zhangsan&#10;group123"></textarea>
                                 <div class="form-text">支持用户ID和组ID，每行一个。"@all" 表示发送给所有人</div>
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label">推送模板</label>
+                                <select class="form-select" id="addPortTemplate">
+                                    {% for t in templates %}
+                                    <option value="{{ t.id }}">{{ t.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
                         </form>
                     </div>
                     <div class="modal-footer">
@@ -843,13 +940,14 @@ PORTS_JS = """
                 return;
             }
             
-            const targets = targetsText ? targetsText.split('\n').map(t => t.trim()).filter(t => t) : [];
+            const targets = targetsText ? targetsText.split(String.fromCharCode(10)).map(t => t.trim()).filter(t => t) : [];
             
             const data = {
                 port: port,
                 server_name: name,
                 server_type: type,
                 wechat_config_id: wechatConfigId ? parseInt(wechatConfigId) : null,
+                template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
                 send_targets: targets,
                 enabled: true
             };
@@ -864,8 +962,38 @@ PORTS_JS = """
         }
         
         async function editPort(portId) {
-            // TODO: 实现编辑功能
-            showToast('编辑功能开发中', 'info');
+            const ports = await api('/api/ports');
+            const port = ports.find(p => p.id === portId);
+            if (!port) { showToast('端口不存在', 'danger'); return; }
+            
+            // Switch modal title to edit mode
+            document.querySelector('#addPortModal .modal-title').textContent = '编辑端口';
+            document.getElementById('addPortName').value = port.server_name || '';
+            document.getElementById('addPortNumber').value = port.port || '';
+            document.getElementById('addPortType').value = port.server_type || 'Emby';
+            document.getElementById('addPortWechatConfig').value = port.wechat_config_id || '';
+            document.getElementById('addPortTemplate').value = port.template_id || '1';
+            const targets = port.send_targets;
+            document.getElementById('addPortTargets').value = Array.isArray(targets) ? targets.join(String.fromCharCode(10)) : (targets || '');
+            
+            // Change save button behavior to update instead of create
+            const saveBtn = document.querySelector('#addPortModal .btn-primary');
+            saveBtn.onclick = async function() {
+                const data = {
+                    port: parseInt(document.getElementById('addPortNumber').value),
+                    server_name: document.getElementById('addPortName').value.trim(),
+                    server_type: document.getElementById('addPortType').value,
+                    wechat_config_id: document.getElementById('addPortWechatConfig').value ? parseInt(document.getElementById('addPortWechatConfig').value) : null,
+                    template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
+                    send_targets: document.getElementById('addPortTargets').value.trim() ? document.getElementById('addPortTargets').value.trim().split(String.fromCharCode(10)).map(t => t.trim()).filter(t => t) : [],
+                };
+                if (!data.server_name || !data.port) { showToast('请填写组名和端口号', 'danger'); return; }
+                const res = await apiPut('/api/ports/' + portId, data);
+                if (res.error) { showToast('更新失败: ' + res.error, 'danger'); }
+                else { showToast('端口已更新'); bootstrap.Modal.getInstance(document.getElementById('addPortModal')).hide(); setTimeout(() => location.reload(), 500); }
+            };
+            
+            new bootstrap.Modal(document.getElementById('addPortModal')).show();
         }
         
         async function togglePort(portId) {
@@ -1304,6 +1432,234 @@ SETTINGS_JS = """
             } else {
                 showToast('❌ TMDB 连接失败：' + (res.error || ''), 'danger');
             }
+        }
+    </script>
+"""
+
+
+
+LOGS_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-list-ul"></i> 系统日志</h2>
+            <div>
+                <select class="form-select form-select-sm d-inline-block w-auto me-2" id="logLevelFilter" onchange="loadLogs()">
+                    <option value="">全部级别</option>
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                </select>
+                <button class="btn btn-outline-danger btn-sm" onclick="clearLogs()">
+                    <i class="bi bi-trash"></i> 清空日志
+                </button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover font-monospace small">
+                <thead>
+                    <tr>
+                        <th style="width:160px">时间</th>
+                        <th style="width:80px">级别</th>
+                        <th style="width:120px">模块</th>
+                        <th>消息</th>
+                    </tr>
+                </thead>
+                <tbody id="logTableBody">
+                    <tr><td colspan="4" class="text-center text-muted">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+"""
+
+LOGS_JS = """
+    <script>
+        const levelColors = {
+            'DEBUG': 'secondary',
+            'INFO': 'primary',
+            'WARNING': 'warning',
+            'ERROR': 'danger',
+            'CRITICAL': 'dark'
+        };
+
+        async function loadLogs() {
+            const level = document.getElementById('logLevelFilter').value;
+            const url = level ? '/api/logs?level=' + level + '&limit=200' : '/api/logs?limit=200';
+            const logs = await api(url);
+            const tbody = document.getElementById('logTableBody');
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无日志</td></tr>';
+                return;
+            }
+            tbody.innerHTML = logs.map(l => {
+                const ts = l.timestamp ? l.timestamp.replace('T', ' ').substring(0, 19) : '';
+                const color = levelColors[l.level] || 'secondary';
+                return '<tr>' +
+                    '<td class="text-nowrap">' + ts + '</td>' +
+                    '<td><span class="badge bg-' + color + '">' + (l.level || '') + '</span></td>' +
+                    '<td>' + (l.module || '') + '</td>' +
+                    '<td style="word-break:break-all">' + (l.message || '') + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        async function clearLogs() {
+            if (!confirm('确定要清空所有日志吗？')) return;
+            await apiDelete('/api/logs');
+            showToast('日志已清空');
+            loadLogs();
+        }
+
+        loadLogs();
+        setInterval(loadLogs, 5000);
+    </script>
+"""
+
+
+
+TEMPLATES_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-file-earmark-text"></i> 推送模板</h2>
+            <button class="btn btn-primary" onclick="openAddTemplate()">
+                <i class="bi bi-plus-lg"></i> 添加模板
+            </button>
+        </div>
+
+        <div class="row" id="templateCards">
+            {% for t in templates %}
+            <div class="col-md-6 mb-3">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h5 class="card-title mb-0">{{ t.name }}</h5>
+                            <div>
+                                <button class="btn btn-icon btn-outline-primary btn-sm" onclick="openEditTemplate({{ t.id }})" title="\u7f16\u8f91"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteTemplate({{ t.id }})" title="\u5220\u9664"><i class="bi bi-trash"></i></button>
+                            </div>
+                        </div>
+                        <p class="text-muted small mb-1"><strong>\u6807\u9898\uff1a</strong>{{ t.title }}</p>
+                        <pre class="bg-light p-2 rounded small mb-0" style="max-height:120px;overflow-y:auto">{{ t.description }}</pre>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Edit Template Modal -->
+        <div class="modal fade" id="editTemplateModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="editTemplateModalTitle">\u7f16\u8f91\u6a21\u677f</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="editTemplateId">
+                        <div class="mb-3">
+                            <label class="form-label">\u6a21\u677f\u540d\u79f0 *</label>
+                            <input type="text" class="form-control" id="editTemplateName" placeholder="\u4f8b\u5982\uff1a\u5f71\u89c6\u66f4\u65b0">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">\u6807\u9898\u6a21\u677f</label>
+                            <input type="text" class="form-control" id="editTemplateTitle" placeholder="\u652f\u6301\u53d8\u91cf\uff1a{type} {name} {year} \u7b49">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">\u63cf\u8ff0\u6a21\u677f</label>
+                            <textarea class="form-control" id="editTemplateDesc" rows="6" placeholder="\u652f\u6301\u53d8\u91cf\uff1a{type} {name} {year} {episode} {date} {rating} {intro} {tmdb_url} {season} {ep_num} {ep_name}"></textarea>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">\u7535\u5f71\u5c01\u9762\u56fe\u5b57\u6bb5</label>
+                                <select class="form-select" id="editPicMovie">
+                                    <option value="media_backdrop">media_backdrop (\u80cc\u666f\u56fe)</option>
+                                    <option value="media_poster">media_poster (\u6d77\u62a5)</option>
+                                    <option value="media_still">media_still (\u5267\u7167)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">\u5267\u96c6\u5c01\u9762\u56fe\u5b57\u6bb5</label>
+                                <select class="form-select" id="editPicEpisode">
+                                    <option value="media_still">media_still (\u5267\u7167)</option>
+                                    <option value="media_backdrop">media_backdrop (\u80cc\u666f\u56fe)</option>
+                                    <option value="media_poster">media_poster (\u6d77\u62a5)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="bg-light p-2 rounded small">
+                            <strong>\u53ef\u7528\u53d8\u91cf\uff1a</strong>
+                            <code>{type}</code> \u7535\u5f71/\u5267\u96c6
+                            <code>{name}</code> \u540d\u79f0
+                            <code>{year}</code> \u5e74\u4efd
+                            <code>{episode}</code> \u5b63\u00b7\u96c6\uff08\u4ec5\u5267\u96c6\u6709\u503c\uff09
+                            <code>{date}</code> \u4e0a\u6620\u65e5\u671f
+                            <code>{rating}</code> \u8bc4\u5206
+                            <code>{intro}</code> \u7b80\u4ecb
+                            <code>{tmdb_url}</code> TMDB\u94fe\u63a5
+                            <code>{season}</code> \u5b63\u53f7
+                            <code>{ep_num}</code> \u96c6\u53f7
+                            <code>{ep_name}</code> \u96c6\u540d
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">\u53d6\u6d88</button>
+                        <button type="button" class="btn btn-primary" onclick="saveTemplate()">\u4fdd\u5b58</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+"""
+
+TEMPLATES_JS = """
+    <script>
+        function openAddTemplate() {
+            document.getElementById('editTemplateModalTitle').textContent = '\u6dfb\u52a0\u6a21\u677f';
+            document.getElementById('editTemplateId').value = '';
+            document.getElementById('editTemplateName').value = '';
+            document.getElementById('editTemplateTitle').value = '';
+            document.getElementById('editTemplateDesc').value = '';
+            document.getElementById('editPicMovie').value = 'media_backdrop';
+            document.getElementById('editPicEpisode').value = 'media_still';
+            new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
+        }
+
+        async function openEditTemplate(id) {
+            const res = await api('/api/templates');
+            const t = res.find(x => x.id === id);
+            if (!t) { showToast('\u6a21\u677f\u4e0d\u5b58\u5728', 'danger'); return; }
+            document.getElementById('editTemplateModalTitle').textContent = '\u7f16\u8f91\u6a21\u677f';
+            document.getElementById('editTemplateId').value = t.id;
+            document.getElementById('editTemplateName').value = t.name || '';
+            document.getElementById('editTemplateTitle').value = t.title || '';
+            document.getElementById('editTemplateDesc').value = t.description || '';
+            document.getElementById('editPicMovie').value = t.picurl_movie || 'media_backdrop';
+            document.getElementById('editPicEpisode').value = t.picurl_episode || 'media_still';
+            new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
+        }
+
+        async function saveTemplate() {
+            const id = document.getElementById('editTemplateId').value;
+            const data = {
+                name: document.getElementById('editTemplateName').value.trim(),
+                title: document.getElementById('editTemplateTitle').value.trim(),
+                description: document.getElementById('editTemplateDesc').value,
+                picurl_movie: document.getElementById('editPicMovie').value,
+                picurl_episode: document.getElementById('editPicEpisode').value
+            };
+            if (!data.name) { showToast('\u8bf7\u8f93\u5165\u6a21\u677f\u540d\u79f0', 'danger'); return; }
+            let res;
+            if (id) { res = await apiPut('/api/templates/' + id, data); }
+            else { res = await apiPost('/api/templates', data); }
+            if (res.error) { showToast('\u64cd\u4f5c\u5931\u8d25: ' + res.error, 'danger'); return; }
+            showToast(id ? '\u6a21\u677f\u5df2\u66f4\u65b0' : '\u6a21\u677f\u5df2\u521b\u5efa');
+            bootstrap.Modal.getInstance(document.getElementById('editTemplateModal')).hide();
+            setTimeout(() => location.reload(), 500);
+        }
+
+        async function deleteTemplate(id) {
+            if (!confirm('\u786e\u5b9a\u8981\u5220\u9664\u6b64\u6a21\u677f\u5417\uff1f')) return;
+            await apiDelete('/api/templates/' + id);
+            showToast('\u6a21\u677f\u5df2\u5220\u9664');
+            setTimeout(() => location.reload(), 500);
         }
     </script>
 """

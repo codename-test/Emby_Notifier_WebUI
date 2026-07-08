@@ -28,7 +28,7 @@ console_handler = logging.StreamHandler()
 
 '''日志级别设置'''
 log_level = os.getenv('LOG_LEVEL', 'INFO')
-if log_level in ['DEBUG', 'INFO', 'WARNING']:
+if log_level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
     level = getattr(logging, log_level)
 else:
     level = getattr(logging, 'INFO')
@@ -51,6 +51,21 @@ if log_export.lower() == 'true':
     file_handler.setFormatter(file_formatter)
 
 
+class DBHandler(logging.Handler):
+    """将日志写入 SQLite 数据库"""
+    def __init__(self, port_id=None):
+        super().__init__()
+        self.port_id = port_id
+
+    def emit(self, record):
+        try:
+            import db
+            module = getattr(record, 'port_id', self.port_id)
+            db.add_log(record.levelname, record.getMessage(), record.name, module)
+        except Exception:
+            pass  # 避免日志写入失败影响主流程
+
+
 '''控制台格式'''
 console_formatter = colorlog.ColoredFormatter(
     fmt='%(log_color)s[%(levelname)s] %(message)s',
@@ -62,6 +77,16 @@ console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 if log_export.lower() == 'true':
     logger.addHandler(file_handler)
+
+
+def setup_db_logging(port_id=None):
+    """启用数据库日志"""
+    for h in logger.handlers:
+        if isinstance(h, DBHandler):
+            return
+    db_handler = DBHandler(port_id)
+    db_handler.setLevel(logger.level)
+    logger.addHandler(db_handler)
 
 
 '''敏感数据脱敏'''
