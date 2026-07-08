@@ -39,6 +39,19 @@ def init_db():
             server_name TEXT NOT NULL DEFAULT '',
             server_type TEXT NOT NULL DEFAULT 'Emby',
             server_url TEXT DEFAULT '',
+            wechat_config_id INTEGER,
+            send_targets TEXT DEFAULT '[]',
+            enabled INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (wechat_config_id) REFERENCES wechat_configs(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS wechat_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            corp_id TEXT NOT NULL,
+            corp_secret TEXT NOT NULL,
+            agent_id INTEGER NOT NULL,
             enabled INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -113,13 +126,14 @@ def get_port_by_number(port_number):
     return dict(row) if row else None
 
 
-def create_port(port_number, server_name, server_type="Emby", server_url=""):
+def create_port(port_number, server_name, server_type="Emby", server_url="", wechat_config_id=None, send_targets=None):
     conn = _get_conn()
     try:
+        send_targets_json = json.dumps(send_targets) if send_targets else "[]"
         cursor = conn.execute(
-            "INSERT INTO ports (port, server_name, server_type, server_url) "
-            "VALUES (?, ?, ?, ?)",
-            (port_number, server_name, server_type, server_url),
+            "INSERT INTO ports (port, server_name, server_type, server_url, wechat_config_id, send_targets) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (port_number, server_name, server_type, server_url, wechat_config_id, send_targets_json),
         )
         conn.commit()
         port_id = cursor.lastrowid
@@ -140,8 +154,14 @@ def create_port(port_number, server_name, server_type="Emby", server_url=""):
 
 def update_port(port_id, **kwargs):
     conn = _get_conn()
-    allowed = {"port", "server_name", "server_type", "server_url", "enabled"}
-    fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    allowed = {"port", "server_name", "server_type", "server_url", "wechat_config_id", "send_targets", "enabled"}
+    fields = {}
+    for k, v in kwargs.items():
+        if k in allowed and v is not None:
+            if k == "send_targets" and isinstance(v, (list, dict)):
+                fields[k] = json.dumps(v)
+            else:
+                fields[k] = v
     if not fields:
         return False
     set_clause = ", ".join(f"{k}=?" for k in fields)
@@ -376,3 +396,51 @@ def get_all_system_config():
     conn = _get_conn()
     cursor = conn.execute("SELECT key, value FROM system_config")
     return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+# ──────────────────────────────────────────────
+#  WeChat Config Management
+# ──────────────────────────────────────────────
+
+def get_all_wechat_configs():
+    """获取所有企业微信配置组"""
+    conn = _get_conn()
+    cursor = conn.execute("SELECT * FROM wechat_configs ORDER BY id")
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def get_wechat_config(config_id):
+    """获取单个企业微信配置"""
+    conn = _get_conn()
+    cursor = conn.execute("SELECT * FROM wechat_configs WHERE id = ?", (config_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def create_wechat_config(name, corp_id, corp_secret, agent_id, enabled=1):
+    """创建企业微信配置组"""
+    conn = _get_conn()
+    cursor = conn.execute(
+        "INSERT INTO wechat_configs (name, corp_id, corp_secret, agent_id, enabled) VALUES (?, ?, ?, ?, ?)",
+        (name, corp_id, corp_secret, agent_id, enabled)
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def update_wechat_config(config_id, name, corp_id, corp_secret, agent_id, enabled=1):
+    """更新企业微信配置组"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE wechat_configs SET name=?, corp_id=?, corp_secret=?, agent_id=?, enabled=? WHERE id=?",
+        (name, corp_id, corp_secret, agent_id, enabled, config_id)
+    )
+    conn.commit()
+
+
+def delete_wechat_config(config_id):
+    """删除企业微信配置组"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM wechat_configs WHERE id = ?", (config_id,))
+    conn.commit()
+

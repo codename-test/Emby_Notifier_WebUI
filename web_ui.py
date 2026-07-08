@@ -17,6 +17,17 @@ app = Flask(__name__)
 port_manager = None  # Will be set by main.py
 
 
+# Custom Jinja2 filter for parsing JSON
+@app.template_filter('fromjson')
+def fromjson_filter(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except:
+            return []
+    return value if value else []
+
+
 # ──────────────────────────────────────────────
 #  Page Routes
 # ──────────────────────────────────────────────
@@ -24,25 +35,98 @@ port_manager = None  # Will be set by main.py
 
 @app.route("/")
 def index():
+    """仪表盘页面"""
     stats = db.get_dashboard_stats()
     ports = db.get_all_ports()
-    # Render Jinja2 parts first
     from flask import render_template_string
     content_rendered = render_template_string(INDEX_CONTENT, stats=stats, ports=ports)
-    # Assemble full page
     html = BASE_TEMPLATE.replace("{title}", "仪表盘") \
         .replace("{dashboard_active}", "active") \
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{wechat_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", INDEX_JS)
     return html
 
 
+@app.route("/ports")
+def ports_page():
+    """端口管理页面"""
+    ports = db.get_all_ports()
+    wechat_configs = db.get_all_wechat_configs()
+    from flask import render_template_string
+    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs)
+    html = BASE_TEMPLATE.replace("{title}", "端口管理") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "active") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "") \
+        .replace("{wechat_active}", "") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", PORTS_JS)
+    return html
+
+
+@app.route("/dnd")
+def dnd_page():
+    """勿扰设置页面"""
+    dnd = db.get_dnd_settings()
+    from flask import render_template_string
+    content_rendered = render_template_string(DND_CONTENT, dnd=dnd)
+    html = BASE_TEMPLATE.replace("{title}", "勿扰设置") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "active") \
+        .replace("{queue_active}", "") \
+        .replace("{wechat_active}", "") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", DND_JS)
+    return html
+
+
+@app.route("/queue")
+def queue_page():
+    """消息队列页面"""
+    from flask import render_template_string
+    content_rendered = render_template_string(QUEUE_CONTENT)
+    html = BASE_TEMPLATE.replace("{title}", "消息队列") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "active") \
+        .replace("{wechat_active}", "") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", QUEUE_JS)
+    return html
+
+
+@app.route("/wechat")
+def wechat_page():
+    """企业微信配置页面"""
+    wechat_configs = db.get_all_wechat_configs()
+    from flask import render_template_string
+    content_rendered = render_template_string(WECHAT_CONTENT, wechat_configs=wechat_configs)
+    html = BASE_TEMPLATE.replace("{title}", "企业微信配置") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "") \
+        .replace("{wechat_active}", "active") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", WECHAT_JS)
+    return html
+
+
 @app.route("/settings")
 def settings():
+    """系统设置页面"""
     config = db.get_all_system_config()
     from flask import render_template_string
     content_rendered = render_template_string(SETTINGS_CONTENT, config=config)
@@ -51,6 +135,7 @@ def settings():
         .replace("{ports_active}", "") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
+        .replace("{wechat_active}", "") \
         .replace("{settings_active}", "active") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", SETTINGS_JS)
@@ -68,6 +153,12 @@ def api_get_ports():
     for p in ports:
         p["channels"] = db.get_channels(p["id"])
         p["running"] = port_manager.is_running(p["id"]) if port_manager else False
+        # 解析 send_targets
+        if isinstance(p.get("send_targets"), str):
+            try:
+                p["send_targets"] = json.loads(p["send_targets"])
+            except:
+                p["send_targets"] = []
     return jsonify(ports)
 
 
@@ -79,6 +170,8 @@ def api_create_port():
         server_name=data.get("server_name", ""),
         server_type=data.get("server_type", "Emby"),
         server_url=data.get("server_url", ""),
+        wechat_config_id=data.get("wechat_config_id"),
+        send_targets=data.get("send_targets", [])
     )
     if port_id is None:
         return jsonify({"error": "端口号已存在"}), 400
@@ -133,6 +226,50 @@ def api_toggle_port(port_id):
 
 
 # ──────────────────────────────────────────────
+#  WeChat Config API
+# ──────────────────────────────────────────────
+
+
+@app.route("/api/wechat-configs", methods=["GET"])
+def api_get_wechat_configs():
+    configs = db.get_all_wechat_configs()
+    return jsonify(configs)
+
+
+@app.route("/api/wechat-configs", methods=["POST"])
+def api_create_wechat_config():
+    data = request.json
+    config_id = db.create_wechat_config(
+        name=data.get("name", ""),
+        corp_id=data.get("corp_id", ""),
+        corp_secret=data.get("corp_secret", ""),
+        agent_id=data.get("agent_id", 0),
+        enabled=data.get("enabled", 1)
+    )
+    return jsonify({"id": config_id, "status": "created"})
+
+
+@app.route("/api/wechat-configs/<int:config_id>", methods=["PUT"])
+def api_update_wechat_config(config_id):
+    data = request.json
+    db.update_wechat_config(
+        config_id=config_id,
+        name=data.get("name", ""),
+        corp_id=data.get("corp_id", ""),
+        corp_secret=data.get("corp_secret", ""),
+        agent_id=data.get("agent_id", 0),
+        enabled=data.get("enabled", 1)
+    )
+    return jsonify({"status": "updated"})
+
+
+@app.route("/api/wechat-configs/<int:config_id>", methods=["DELETE"])
+def api_delete_wechat_config(config_id):
+    db.delete_wechat_config(config_id)
+    return jsonify({"status": "deleted"})
+
+
+# ──────────────────────────────────────────────
 #  Channel API
 # ──────────────────────────────────────────────
 
@@ -146,9 +283,7 @@ def api_get_channels(port_id):
 @app.route("/api/ports/<int:port_id>/channels/<channel_type>", methods=["PUT"])
 def api_save_channel(port_id, channel_type):
     data = request.json
-    config = data.get("config", {})
-    enabled = data.get("enabled", False)
-    db.save_channel(port_id, channel_type, config, enabled)
+    db.save_channel(port_id, channel_type, data.get("config", {}), data.get("enabled", False))
     return jsonify({"status": "saved"})
 
 
@@ -172,15 +307,15 @@ def api_get_dnd():
     return jsonify(db.get_dnd_settings())
 
 
-@app.route("/api/dnd", methods=["PUT"])
-def api_update_dnd():
+@app.route("/api/dnd", methods=["POST"])
+def api_save_dnd():
     data = request.json
     db.update_dnd(
         enabled=data.get("enabled"),
         start_time=data.get("start_time"),
-        end_time=data.get("end_time"),
+        end_time=data.get("end_time")
     )
-    return jsonify({"status": "updated"})
+    return jsonify({"status": "saved"})
 
 
 # ──────────────────────────────────────────────
@@ -190,56 +325,78 @@ def api_update_dnd():
 
 @app.route("/api/queue", methods=["GET"])
 def api_get_queue():
-    limit = request.args.get("limit", 100, type=int)
-    offset = request.args.get("offset", 0, type=int)
-    messages = db.get_all_messages(limit=limit, offset=offset)
-    stats = db.get_queue_stats()
-    return jsonify({"messages": messages, "stats": stats})
-
-
-@app.route("/api/queue/<int:msg_id>", methods=["DELETE"])
-def api_delete_message(msg_id):
-    db.delete_message(msg_id)
-    return jsonify({"status": "deleted"})
+    messages = db.get_all_messages()
+    for m in messages:
+        port = db.get_port(m["port_id"])
+        if port:
+            m["server_name"] = port["server_name"]
+            m["port"] = port["port"]
+    return jsonify({"messages": messages})
 
 
 @app.route("/api/queue/flush", methods=["POST"])
 def api_flush_queue():
-    """手动刷新队列，发送所有待处理消息"""
-    data = request.json or {}
-    port_id = data.get("port_id")
-    if port_id:
-        count = media.flush_queue_for_port(port_id)
-    else:
-        # Flush all ports
-        count = 0
-        for p in db.get_all_ports():
-            count += media.flush_queue_for_port(p["id"])
-    return jsonify({"status": "flushed", "count": count})
+    """Flush pending messages (trigger send)"""
+    pending = db.get_pending_messages()
+    count = 0
+    for msg in pending:
+        port = db.get_port(msg["port_id"])
+        if port:
+            try:
+                media_detail = json.loads(msg["media_json"])
+                channels = db.get_enabled_channels(msg["port_id"])
+                for ch in channels:
+                    media.send_notification(ch, media_detail, port["server_name"])
+                db.update_message_status(msg["id"], "sent")
+                count += 1
+            except Exception as e:
+                db.update_message_status(msg["id"], "failed", str(e))
+    return jsonify({"count": count})
+
+
+@app.route("/api/queue/<int:msg_id>", methods=["DELETE"])
+def api_delete_queue_msg(msg_id):
+    db.delete_message(msg_id)
+    return jsonify({"status": "deleted"})
 
 
 # ──────────────────────────────────────────────
-#  Test & Stats
+#  Test Push API
 # ──────────────────────────────────────────────
 
 
 @app.route("/api/ports/<int:port_id>/test", methods=["POST"])
-def api_test_port(port_id):
-    """发送测试消息"""
+def api_test_push(port_id):
+    """Send test notification"""
     port = db.get_port(port_id)
     if not port:
         return jsonify({"error": "Port not found"}), 404
+    
+    channels = db.get_enabled_channels(port_id)
+    if not channels:
+        return jsonify({"error": "没有启用的推送渠道"}), 400
+    
+    success_count = 0
+    error_count = 0
+    
+    for ch in channels:
+        try:
+            media.send_test_notification(ch, port["server_name"])
+            success_count += 1
+        except Exception as e:
+            error_count += 1
+            log.logger.error(f"Test push failed for channel {ch['channel_type']}: {e}")
+    
+    return jsonify({
+        "success": success_count,
+        "failed": error_count,
+        "total": len(channels)
+    })
 
-    enabled_channels = db.get_enabled_channels(port_id)
-    if not enabled_channels:
-        return jsonify({"error": "No enabled channels"}), 400
 
-    try:
-        results = media.send_test_notification(port_id)
-        return jsonify({"status": "sent", "results": results})
-    except Exception as e:
-        log.logger.error(f"Test notification failed: {e}")
-        return jsonify({"error": str(e)}), 500
+# ──────────────────────────────────────────────
+#  Stats API
+# ──────────────────────────────────────────────
 
 
 @app.route("/api/stats", methods=["GET"])
@@ -298,8 +455,23 @@ def api_test_tmdb():
         return jsonify({"success": False, "error": "TMDB API 连接失败，请检查 Token 是否正确"})
 
 
+def create_app(pm=None):
+    """Create and return Flask app, optionally with port manager reference."""
+    global port_manager
+    port_manager = pm
+    return app
+
+
+def run_web_ui(web_port=5000, pm=None):
+    """Run the Web UI server."""
+    global port_manager
+    port_manager = pm
+    log.logger.info(f"Web UI starting on http://0.0.0.0:{web_port}")
+    app.run(host="0.0.0.0", port=web_port, debug=False, use_reloader=False)
+
+
 # ──────────────────────────────────────────────
-#  HTML Templates (embedded)
+#  HTML Templates
 # ──────────────────────────────────────────────
 
 BASE_TEMPLATE = """<!DOCTYPE html>
@@ -317,7 +489,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             --sidebar-hover: #2d3139;
             --sidebar-active: #3b82f6;
         }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; scroll-behavior: smooth; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; }
         .sidebar {
             position: fixed; top: 0; left: 0; width: var(--sidebar-width);
             height: 100vh; background: var(--sidebar-bg); color: #fff;
@@ -357,15 +529,6 @@ BASE_TEMPLATE = """<!DOCTYPE html>
         .badge-dnd { background: #f59e0b; }
         .btn-icon { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; }
         .table th { font-weight: 600; color: #6b7280; font-size: 0.85rem; text-transform: uppercase; }
-        .modal-header { border-bottom: 1px solid #f0f0f0; }
-        .modal-footer { border-top: 1px solid #f0f0f0; }
-        .form-label { font-weight: 500; color: #374151; }
-        .channel-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
-        .channel-card.enabled { border-color: #3b82f6; background: #f0f7ff; }
-        .channel-card .channel-title { font-weight: 600; }
-        .queue-status-pending { color: #f59e0b; }
-        .queue-status-sent { color: #10b981; }
-        .queue-status-failed { color: #ef4444; }
     </style>
 </head>
 <body>
@@ -375,10 +538,11 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             <i class="bi bi-bell-fill"></i> Emby Notifier
         </div>
         <div class="nav flex-column mt-3">
-            <a class="nav-link {dashboard_active}" href="#dashboard"><i class="bi bi-speedometer2"></i> 仪表盘</a>
-            <a class="nav-link {ports_active}" href="#ports"><i class="bi bi-hdd-network"></i> 端口管理</a>
-            <a class="nav-link {dnd_active}" href="#dnd"><i class="bi bi-moon-fill"></i> 勿扰设置</a>
-            <a class="nav-link {queue_active}" href="#queue"><i class="bi bi-inbox"></i> 消息队列</a>
+            <a class="nav-link {dashboard_active}" href="/"><i class="bi bi-speedometer2"></i> 仪表盘</a>
+            <a class="nav-link {ports_active}" href="/ports"><i class="bi bi-hdd-network"></i> 端口管理</a>
+            <a class="nav-link {dnd_active}" href="/dnd"><i class="bi bi-moon-fill"></i> 勿扰设置</a>
+            <a class="nav-link {queue_active}" href="/queue"><i class="bi bi-inbox"></i> 消息队列</a>
+            <a class="nav-link {wechat_active}" href="/wechat"><i class="bi bi-wechat"></i> 企业微信</a>
             <a class="nav-link {settings_active}" href="/settings"><i class="bi bi-gear-fill"></i> 系统设置</a>
         </div>
         <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;">
@@ -425,226 +589,236 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>"""
 
+
+
 INDEX_CONTENT = """
-        <div id="dashboard" class="page-header d-flex justify-content-between align-items-center">
+        <div class="page-header d-flex justify-content-between align-items-center">
             <h2><i class="bi bi-speedometer2"></i> 仪表盘</h2>
             <button class="btn btn-outline-primary btn-sm" onclick="location.reload()">
                 <i class="bi bi-arrow-clockwise"></i> 刷新
             </button>
         </div>
 
-        <!-- Stats Cards -->
         <div class="row g-3 mb-4">
             <div class="col-md-3">
-                <div class="stat-card d-flex align-items-center">
-                    <div class="stat-icon bg-primary bg-opacity-10 text-primary me-3">
-                        <i class="bi bi-hdd-network"></i>
-                    </div>
-                    <div>
-                        <div class="stat-value">{{ stats.active_ports }}</div>
-                        <div class="stat-label">活跃端口</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card d-flex align-items-center">
-                    <div class="stat-icon bg-warning bg-opacity-10 text-warning me-3">
-                        <i class="bi bi-inbox"></i>
-                    </div>
-                    <div>
-                        <div class="stat-value">{{ stats.queue_pending }}</div>
-                        <div class="stat-label">待推送消息</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card d-flex align-items-center">
-                    <div class="stat-icon bg-success bg-opacity-10 text-success me-3">
-                        <i class="bi bi-check-circle"></i>
-                    </div>
-                    <div>
-                        <div class="stat-value">{{ stats.queue_sent }}</div>
-                        <div class="stat-label">已推送</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="stat-card d-flex align-items-center">
-                    <div class="stat-icon {% if stats.dnd_enabled %}bg-warning bg-opacity-10 text-warning{% else %}bg-secondary bg-opacity-10 text-secondary{% endif %} me-3">
-                        <i class="bi bi-moon{% if stats.dnd_enabled %}-fill{% endif %}"></i>
-                    </div>
-                    <div>
-                        <div class="stat-value">{% if stats.dnd_enabled %}{{ stats.dnd_start }}-{{ stats.dnd_end }}{% else %}关闭{% endif %}</div>
-                        <div class="stat-label">勿扰模式</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Ports Section -->
-        <div id="ports" class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center py-3">
-                <span><i class="bi bi-hdd-network me-2"></i>端口管理</span>
-                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#portModal" onclick="resetPortForm()">
-                    <i class="bi bi-plus-lg"></i> 添加端口
-                </button>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th>端口号</th>
-                                <th>服务器名称</th>
-                                <th>类型</th>
-                                <th>状态</th>
-                                <th>渠道</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for p in ports %}
-                            <tr>
-                                <td><strong>{{ p.port }}</strong></td>
-                                <td>{{ p.server_name or '-' }}</td>
-                                <td><span class="badge bg-info">{{ p.server_type }}</span></td>
-                                <td>
-                                    {% if p.enabled %}
-                                    <span class="badge badge-running">运行中</span>
-                                    {% else %}
-                                    <span class="badge badge-stopped">已停止</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <button class="btn btn-outline-secondary btn-sm" onclick="showChannels({{ p.id }}, '{{ p.server_name }}')">
-                                        <i class="bi bi-gear"></i> 配置
-                                    </button>
-                                </td>
-                                <td>
-                                    <button class="btn btn-icon btn-outline-primary" title="编辑" onclick="editPort({{ p.id }})">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    <button class="btn btn-icon btn-outline-{{ 'warning' if p.enabled else 'success' }}" title="{{ '停止' if p.enabled else '启动' }}" onclick="togglePort({{ p.id }})">
-                                        <i class="bi bi-{{ 'pause' if p.enabled else 'play' }}"></i>
-                                    </button>
-                                    <button class="btn btn-icon btn-outline-info" title="测试推送" onclick="testPort({{ p.id }})">
-                                        <i class="bi bi-send"></i>
-                                    </button>
-                                    <button class="btn btn-icon btn-outline-danger" title="删除" onclick="deletePort({{ p.id }})">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            {% if not ports %}
-                            <tr><td colspan="6" class="text-center text-muted py-4">暂无端口配置，请点击"添加端口"开始</td></tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- DND Section -->
-        <div id="dnd" class="card mb-4">
-            <div class="card-header py-3">
-                <i class="bi bi-moon-fill me-2"></i>勿扰模式设置
-            </div>
-            <div class="card-body">
-                <div class="row align-items-center">
-                    <div class="col-md-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="dndEnabled" {% if stats.dnd_enabled %}checked{% endif %}>
-                            <label class="form-check-label" for="dndEnabled">启用勿扰</label>
+                <div class="stat-card">
+                    <div class="d-flex align-items-center">
+                        <div class="stat-icon bg-primary bg-opacity-10 text-primary me-3">
+                            <i class="bi bi-hdd-network"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value">{{ stats.active_ports }}</div>
+                            <div class="stat-label">活跃端口</div>
                         </div>
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label">开始时间</label>
-                        <input type="time" class="form-control" id="dndStart" value="{{ stats.dnd_start }}">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">结束时间</label>
-                        <input type="time" class="form-control" id="dndEnd" value="{{ stats.dnd_end }}">
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button class="btn btn-primary" onclick="saveDND()">
-                            <i class="bi bi-check-lg"></i> 保存
-                        </button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="d-flex align-items-center">
+                        <div class="stat-icon bg-success bg-opacity-10 text-success me-3">
+                            <i class="bi bi-check-circle"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value">{{ stats.queue_sent }}</div>
+                            <div class="stat-label">已推送</div>
+                        </div>
                     </div>
                 </div>
-                <div class="mt-2">
-                    <small class="text-muted">勿扰期间收到的新媒体消息将暂存到队列，勿扰结束后统一推送。</small>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="d-flex align-items-center">
+                        <div class="stat-icon bg-warning bg-opacity-10 text-warning me-3">
+                            <i class="bi bi-clock"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value">{{ stats.queue_pending }}</div>
+                            <div class="stat-label">待推送</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="d-flex align-items-center">
+                        <div class="stat-icon bg-{% if stats.dnd_enabled %}warning{% else %}secondary{% endif %} bg-opacity-10 text-{% if stats.dnd_enabled %}warning{% else %}secondary{% endif %} me-3">
+                            <i class="bi bi-moon-fill"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value">{% if stats.dnd_enabled %}开{% else %}关{% endif %}</div>
+                            <div class="stat-label">勿扰模式</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Queue Section -->
-        <div id="queue" class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center py-3">
-                <span><i class="bi bi-inbox me-2"></i>消息队列</span>
-                <div>
-                    <button class="btn btn-success btn-sm" onclick="flushQueue()">
-                        <i class="bi bi-send-check"></i> 立即推送全部
-                    </button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="loadQueue()">
-                        <i class="bi bi-arrow-clockwise"></i> 刷新
-                    </button>
-                </div>
+        <div class="card">
+            <div class="card-header py-3">
+                <i class="bi bi-hdd-network me-2"></i>端口状态
             </div>
             <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>端口</th>
-                                <th>媒体信息</th>
-                                <th>状态</th>
-                                <th>创建时间</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="queueBody">
-                            <tr><td colspan="6" class="text-center text-muted py-3">加载中...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>端口</th>
+                            <th>服务器名称</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for port in ports %}
+                        <tr>
+                            <td><code>{{ port.port }}</code></td>
+                            <td>{{ port.server_name }}</td>
+                            <td>{{ port.server_type }}</td>
+                            <td>
+                                {% if port.enabled %}
+                                <span class="badge badge-running">运行中</span>
+                                {% else %}
+                                <span class="badge badge-stopped">已停止</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+"""
+
+INDEX_JS = """
+    <script>
+        setInterval(() => location.reload(), 30000);
+    </script>
+"""
+
+
+PORTS_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-hdd-network"></i> 端口管理</h2>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPortModal">
+                <i class="bi bi-plus-lg"></i> 添加端口
+            </button>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>组名</th>
+                            <th>端口</th>
+                            <th>服务器类型</th>
+                            <th>企业微信配置</th>
+                            <th>发送对象</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portsTable">
+                        {% for port in ports %}
+                        <tr data-port-id="{{ port.id }}">
+                            <td>{{ port.server_name }}</td>
+                            <td><code>{{ port.port }}</code></td>
+                            <td>{{ port.server_type }}</td>
+                            <td>
+                                {% if port.wechat_config_id %}
+                                    {% for wc in wechat_configs %}
+                                        {% if wc.id == port.wechat_config_id %}
+                                            {{ wc.name }}
+                                        {% endif %}
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="text-muted">未配置</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% set targets = [] %}
+                                {% if port.send_targets %}
+                                    {% if port.send_targets is string %}
+                                        {% set targets = port.send_targets | fromjson %}
+                                    {% else %}
+                                        {% set targets = port.send_targets %}
+                                    {% endif %}
+                                {% endif %}
+                                {% if targets %}
+                                    {{ targets | join(', ') }}
+                                {% else %}
+                                    <span class="text-muted">未配置</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if port.enabled %}
+                                <span class="badge badge-running">运行中</span>
+                                {% else %}
+                                <span class="badge badge-stopped">已停止</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-icon btn-outline-primary btn-sm" onclick="editPort({{ port.id }})" title="编辑">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-icon btn-outline-success btn-sm" onclick="testPush({{ port.id }})" title="测试推送">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                                <button class="btn btn-icon btn-outline-{% if port.enabled %}warning{% else %}success{% endif %} btn-sm" onclick="togglePort({{ port.id }})" title="{% if port.enabled %}停止{% else %}启动{% endif %}">
+                                    <i class="bi bi-{% if port.enabled %}pause{% else %}play{% endif %}-fill"></i>
+                                </button>
+                                <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deletePort({{ port.id }})" title="删除">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
 
-        <!-- Port Modal -->
-        <div class="modal fade" id="portModal" tabindex="-1">
+        <!-- Add Port Modal -->
+        <div class="modal fade" id="addPortModal" tabindex="-1">
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title" id="portModalTitle">添加端口</h5>
+                        <h5 class="modal-title">添加端口</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
-                        <input type="hidden" id="editPortId">
-                        <div class="mb-3">
-                            <label class="form-label">端口号 <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="portNumber" placeholder="例如: 8001" min="1" max="65535">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">服务器名称</label>
-                            <input type="text" class="form-control" id="serverName" placeholder="例如: My Emby Server">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">服务器类型</label>
-                            <select class="form-select" id="serverType">
-                                <option value="Emby">Emby</option>
-                                <option value="Jellyfin">Jellyfin</option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">服务器 URL</label>
-                            <input type="text" class="form-control" id="serverUrl" placeholder="例如: https://emby.example.com">
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="portEnabled" checked>
-                            <label class="form-check-label" for="portEnabled">启用</label>
-                        </div>
+                        <form id="addPortForm">
+                            <div class="mb-3">
+                                <label class="form-label">组名 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addPortName" required placeholder="例如：家庭服务器">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">监听端口 <span class="text-danger">*</span></label>
+                                <input type="number" class="form-control" id="addPortNumber" required placeholder="例如：8001">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">服务器类型</label>
+                                <select class="form-select" id="addPortType">
+                                    <option value="Emby">Emby</option>
+                                    <option value="Jellyfin">Jellyfin</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">企业微信配置组</label>
+                                <select class="form-select" id="addPortWechatConfig">
+                                    <option value="">请选择...</option>
+                                    {% for wc in wechat_configs %}
+                                    <option value="{{ wc.id }}">{{ wc.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">需要先在"企业微信"页面创建配置组</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">发送对象</label>
+                                <textarea class="form-control" id="addPortTargets" rows="3" placeholder="用户ID或组ID，每行一个&#10;例如：&#10;@all&#10;zhangsan&#10;group123"></textarea>
+                                <div class="form-text">支持用户ID和组ID，每行一个。"@all" 表示发送给所有人</div>
+                            </div>
+                        </form>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
@@ -653,271 +827,166 @@ INDEX_CONTENT = """
                 </div>
             </div>
         </div>
-
-        <!-- Channel Modal -->
-        <div class="modal fade" id="channelModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">推送渠道配置</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body" id="channelModalBody">
-                        <!-- WeChat Work -->
-                        <div class="channel-card" id="ch-wechat_work">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div class="channel-title"><i class="bi bi-chat-dots-fill text-success me-2"></i>企业微信</div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="wechatEnabled">
-                                    <label class="form-check-label" for="wechatEnabled">启用</label>
-                                </div>
-                            </div>
-                            <div class="row g-2">
-                                <div class="col-md-6">
-                                    <label class="form-label">Corp ID</label>
-                                    <input type="text" class="form-control" id="wechatCorpId" placeholder="企业ID">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Corp Secret</label>
-                                    <input type="password" class="form-control" id="wechatCorpSecret" placeholder="应用密钥">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Agent ID</label>
-                                    <input type="number" class="form-control" id="wechatAgentId" placeholder="应用AgentID">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">User ID</label>
-                                    <input type="text" class="form-control" id="wechatUserId" placeholder="用户ID，默认 @all" value="@all">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Telegram -->
-                        <div class="channel-card" id="ch-telegram">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div class="channel-title"><i class="bi bi-telegram text-primary me-2"></i>Telegram</div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="tgEnabled">
-                                    <label class="form-check-label" for="tgEnabled">启用</label>
-                                </div>
-                            </div>
-                            <div class="row g-2">
-                                <div class="col-md-6">
-                                    <label class="form-label">Bot Token</label>
-                                    <input type="password" class="form-control" id="tgBotToken" placeholder="Bot Token">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Chat ID</label>
-                                    <input type="text" class="form-control" id="tgChatId" placeholder="Chat ID">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Bark -->
-                        <div class="channel-card" id="ch-bark">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div class="channel-title"><i class="bi bi-phone text-info me-2"></i>Bark (iOS)</div>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="barkEnabled">
-                                    <label class="form-check-label" for="barkEnabled">启用</label>
-                                </div>
-                            </div>
-                            <div class="row g-2">
-                                <div class="col-md-6">
-                                    <label class="form-label">Server</label>
-                                    <input type="text" class="form-control" id="barkServer" placeholder="https://api.day.app" value="https://api.day.app">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Device Keys</label>
-                                    <input type="text" class="form-control" id="barkDeviceKeys" placeholder="设备Key，多个用逗号分隔">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="button" class="btn btn-primary" onclick="saveChannels()">保存配置</button>
-                    </div>
-                </div>
-            </div>
-        </div>
 """
 
-INDEX_JS = """
+PORTS_JS = """
     <script>
-        let currentPortId = null;
-
-        // ── Port Management ──
-        function resetPortForm() {
-            document.getElementById('portModalTitle').textContent = '添加端口';
-            document.getElementById('editPortId').value = '';
-            document.getElementById('portNumber').value = '';
-            document.getElementById('serverName').value = '';
-            document.getElementById('serverType').value = 'Emby';
-            document.getElementById('serverUrl').value = '';
-            document.getElementById('portEnabled').checked = true;
-        }
-
-        async function editPort(portId) {
-            const ports = await api('/api/ports');
-            const p = ports.find(x => x.id === portId);
-            if (!p) return;
-            document.getElementById('portModalTitle').textContent = '编辑端口';
-            document.getElementById('editPortId').value = p.id;
-            document.getElementById('portNumber').value = p.port;
-            document.getElementById('serverName').value = p.server_name;
-            document.getElementById('serverType').value = p.server_type;
-            document.getElementById('serverUrl').value = p.server_url || '';
-            document.getElementById('portEnabled').checked = !!p.enabled;
-            new bootstrap.Modal(document.getElementById('portModal')).show();
-        }
-
         async function savePort() {
-            const editId = document.getElementById('editPortId').value;
-            const data = {
-                port: parseInt(document.getElementById('portNumber').value),
-                server_name: document.getElementById('serverName').value,
-                server_type: document.getElementById('serverType').value,
-                server_url: document.getElementById('serverUrl').value,
-                enabled: document.getElementById('portEnabled').checked ? 1 : 0,
-            };
-            if (!data.port) { showToast('请输入端口号', 'danger'); return; }
-
-            if (editId) {
-                await apiPut(`/api/ports/${editId}`, data);
-                showToast('端口已更新');
-            } else {
-                const res = await api('/api/ports', 'POST', data);
-                if (res.error) { showToast(res.error, 'danger'); return; }
-                showToast('端口已创建');
+            const name = document.getElementById('addPortName').value.trim();
+            const port = parseInt(document.getElementById('addPortNumber').value);
+            const type = document.getElementById('addPortType').value;
+            const wechatConfigId = document.getElementById('addPortWechatConfig').value;
+            const targetsText = document.getElementById('addPortTargets').value.trim();
+            
+            if (!name || !port) {
+                showToast('请填写组名和端口号', 'danger');
+                return;
             }
-            bootstrap.Modal.getInstance(document.getElementById('portModal')).hide();
-            setTimeout(() => location.reload(), 500);
+            
+            const targets = targetsText ? targetsText.split('\n').map(t => t.trim()).filter(t => t) : [];
+            
+            const data = {
+                port: port,
+                server_name: name,
+                server_type: type,
+                wechat_config_id: wechatConfigId ? parseInt(wechatConfigId) : null,
+                send_targets: targets,
+                enabled: true
+            };
+            
+            const res = await apiPost('/api/ports', data);
+            if (res.error) {
+                showToast('创建失败: ' + res.error, 'danger');
+            } else {
+                showToast('端口已创建');
+                setTimeout(() => location.reload(), 500);
+            }
         }
-
+        
+        async function editPort(portId) {
+            // TODO: 实现编辑功能
+            showToast('编辑功能开发中', 'info');
+        }
+        
         async function togglePort(portId) {
-            await apiPost(`/api/ports/${portId}/toggle`);
-            showToast('状态已切换');
+            const res = await apiPost(`/api/ports/${portId}/toggle`);
+            showToast(res.enabled ? '已启动' : '已停止');
             setTimeout(() => location.reload(), 500);
         }
-
+        
         async function deletePort(portId) {
-            if (!confirm('确定要删除此端口及其所有配置吗？')) return;
+            if (!confirm('确定要删除此端口吗？')) return;
             await apiDelete(`/api/ports/${portId}`);
             showToast('端口已删除');
             setTimeout(() => location.reload(), 500);
         }
-
-        async function testPort(portId) {
-            showToast('正在发送测试消息（电影+剧集）...', 'info');
+        
+        async function testPush(portId) {
+            showToast('正在发送测试消息...', 'info');
             const res = await apiPost(`/api/ports/${portId}/test`);
-            if (res.error) { showToast(res.error, 'danger'); return; }
-            
-            // 解析结果
-            const results = res.results || {};
-            const successCount = Object.values(results).filter(v => v === 'success').length;
-            const errorCount = Object.keys(results).filter(k => k.includes('error')).length;
-            
-            if (errorCount === 0) {
-                showToast(`✅ 测试消息发送成功！共 ${successCount} 条`, 'success');
+            if (res.error) {
+                showToast('测试失败: ' + res.error, 'danger');
             } else {
-                const errors = Object.entries(results)
-                    .filter(([k, v]) => k.includes('error'))
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join('<br>');
-                showToast(`⚠️ 部分发送失败<br>${errors}`, 'warning');
+                showToast(`测试完成: 成功 ${res.success} 个，失败 ${res.failed} 个`);
             }
         }
+    </script>
+"""
 
-        // ── Channel Management ──
-        async function showChannels(portId, serverName) {
-            currentPortId = portId;
-            const channels = await api(`/api/ports/${portId}/channels`);
-            const chMap = {};
-            channels.forEach(c => chMap[c.channel_type] = c);
 
-            // WeChat Work
-            const wechat = chMap['wechat_work'] || {config: {}, enabled: 0};
-            document.getElementById('wechatEnabled').checked = !!wechat.enabled;
-            document.getElementById('wechatCorpId').value = wechat.config.corp_id || '';
-            document.getElementById('wechatCorpSecret').value = wechat.config.corp_secret || '';
-            document.getElementById('wechatAgentId').value = wechat.config.agent_id || '';
-            document.getElementById('wechatUserId').value = wechat.config.user_id || '@all';
-            document.getElementById('ch-wechat_work').className = wechat.enabled ? 'channel-card enabled' : 'channel-card';
+DND_CONTENT = """
+        <div class="page-header">
+            <h2><i class="bi bi-moon-fill"></i> 勿扰设置</h2>
+        </div>
 
-            // Telegram
-            const tg = chMap['telegram'] || {config: {}, enabled: 0};
-            document.getElementById('tgEnabled').checked = !!tg.enabled;
-            document.getElementById('tgBotToken').value = tg.config.bot_token || '';
-            document.getElementById('tgChatId').value = tg.config.chat_id || '';
-            document.getElementById('ch-telegram').className = tg.enabled ? 'channel-card enabled' : 'channel-card';
+        <div class="card">
+            <div class="card-body">
+                <form id="dndForm">
+                    <div class="mb-3 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="dndEnabled" {% if dnd.enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="dndEnabled">启用勿扰模式</label>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">开始时间</label>
+                            <input type="time" class="form-control" id="dndStart" value="{{ dnd.start_time }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">结束时间</label>
+                            <input type="time" class="form-control" id="dndEnd" value="{{ dnd.end_time }}">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="saveDnd()">
+                        <i class="bi bi-check-lg"></i> 保存设置
+                    </button>
+                </form>
+            </div>
+        </div>
 
-            // Bark
-            const barkCh = chMap['bark'] || {config: {}, enabled: 0};
-            document.getElementById('barkEnabled').checked = !!barkCh.enabled;
-            document.getElementById('barkServer').value = barkCh.config.server || 'https://api.day.app';
-            document.getElementById('barkDeviceKeys').value = barkCh.config.device_keys || '';
-            document.getElementById('ch-bark').className = barkCh.enabled ? 'channel-card enabled' : 'channel-card';
+        <div class="card mt-3">
+            <div class="card-header py-3">
+                <i class="bi bi-info-circle-fill me-2"></i>说明
+            </div>
+            <div class="card-body">
+                <p>勿扰模式开启后，在指定时间段内收到的推送消息会被暂存到消息队列中，待勿扰时间结束后自动推送。</p>
+                <p class="mb-0"><strong>示例：</strong>设置 23:00 - 07:00，则晚上 11 点到早上 7 点之间的消息会被延迟推送。</p>
+            </div>
+        </div>
+"""
 
-            document.getElementById('channelModal').querySelector('.modal-title').textContent =
-                '推送渠道配置 - ' + serverName;
-            new bootstrap.Modal(document.getElementById('channelModal')).show();
-        }
-
-        async function saveChannels() {
-            if (!currentPortId) return;
-
-            // Save WeChat
-            await apiPut(`/api/ports/${currentPortId}/channels/wechat_work`, {
-                enabled: document.getElementById('wechatEnabled').checked,
-                config: {
-                    corp_id: document.getElementById('wechatCorpId').value,
-                    corp_secret: document.getElementById('wechatCorpSecret').value,
-                    agent_id: document.getElementById('wechatAgentId').value,
-                    user_id: document.getElementById('wechatUserId').value || '@all',
-                }
-            });
-
-            // Save Telegram
-            await apiPut(`/api/ports/${currentPortId}/channels/telegram`, {
-                enabled: document.getElementById('tgEnabled').checked,
-                config: {
-                    bot_token: document.getElementById('tgBotToken').value,
-                    chat_id: document.getElementById('tgChatId').value,
-                }
-            });
-
-            // Save Bark
-            await apiPut(`/api/ports/${currentPortId}/channels/bark`, {
-                enabled: document.getElementById('barkEnabled').checked,
-                config: {
-                    server: document.getElementById('barkServer').value || 'https://api.day.app',
-                    device_keys: document.getElementById('barkDeviceKeys').value,
-                }
-            });
-
-            showToast('渠道配置已保存');
-            bootstrap.Modal.getInstance(document.getElementById('channelModal')).hide();
-        }
-
-        // ── DND Management ──
-        async function saveDND() {
-            await apiPut('/api/dnd', {
-                enabled: document.getElementById('dndEnabled').checked ? 1 : 0,
+DND_JS = """
+    <script>
+        async function saveDnd() {
+            const data = {
+                enabled: document.getElementById('dndEnabled').checked,
                 start_time: document.getElementById('dndStart').value,
-                end_time: document.getElementById('dndEnd').value,
-            });
+                end_time: document.getElementById('dndEnd').value
+            };
+            await apiPost('/api/dnd', data);
             showToast('勿扰设置已保存');
         }
+    </script>
+"""
 
-        // ── Queue Management ──
+
+QUEUE_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-inbox"></i> 消息队列</h2>
+            <button class="btn btn-primary" onclick="flushQueue()">
+                <i class="bi bi-send"></i> 推送全部待发消息
+            </button>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>服务器</th>
+                            <th>媒体信息</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="queueTable"></tbody>
+                </table>
+            </div>
+        </div>
+"""
+
+QUEUE_JS = """
+    <script>
         async function loadQueue() {
             const data = await api('/api/queue');
-            const tbody = document.getElementById('queueBody');
-            if (!data.messages || data.messages.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">暂无队列消息</td></tr>';
+            const tbody = document.getElementById('queueTable');
+            
+            if (data.messages.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">暂无消息</td></tr>';
                 return;
             }
+            
             tbody.innerHTML = data.messages.map(m => {
                 let mediaInfo = '';
                 try {
@@ -958,14 +1027,165 @@ INDEX_JS = """
             loadQueue();
         }
 
-        // ── Init ──
         document.addEventListener('DOMContentLoaded', () => {
             loadQueue();
-            // Auto-refresh queue every 30s
             setInterval(loadQueue, 30000);
         });
     </script>
 """
+
+
+WECHAT_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-wechat"></i> 企业微信配置</h2>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addWechatModal">
+                <i class="bi bi-plus-lg"></i> 添加配置组
+            </button>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>配置组名称</th>
+                            <th>企业 ID (Corp ID)</th>
+                            <th>应用凭证 (Secret)</th>
+                            <th>应用 ID (Agent ID)</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for config in wechat_configs %}
+                        <tr>
+                            <td>{{ config.name }}</td>
+                            <td><code>{{ config.corp_id }}</code></td>
+                            <td><code>{{ config.corp_secret[:8] }}...</code></td>
+                            <td><code>{{ config.agent_id }}</code></td>
+                            <td>
+                                {% if config.enabled %}
+                                <span class="badge bg-success">启用</span>
+                                {% else %}
+                                <span class="badge bg-secondary">禁用</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-icon btn-outline-primary btn-sm" onclick="editWechatConfig({{ config.id }})" title="编辑">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteWechatConfig({{ config.id }})" title="删除">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% if not wechat_configs %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-4">暂无配置组，请点击"添加配置组"</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header py-3">
+                <i class="bi bi-info-circle-fill me-2"></i>使用说明
+            </div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    <li>登录 <a href="https://work.weixin.qq.com" target="_blank">企业微信管理后台</a></li>
+                    <li>进入"应用管理" → "自建" → 创建应用</li>
+                    <li>获取 <strong>Corp ID</strong>（在"我的企业"→"企业信息"中）</li>
+                    <li>获取应用的 <strong>Secret</strong> 和 <strong>Agent ID</strong></li>
+                    <li>在此页面添加配置组，然后在"端口管理"中选择使用</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Add WeChat Config Modal -->
+        <div class="modal fade" id="addWechatModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">添加企业微信配置</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="addWechatForm">
+                            <div class="mb-3">
+                                <label class="form-label">配置组名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addWechatName" required placeholder="例如：默认企业微信">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">企业 ID (Corp ID) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addWechatCorpId" required placeholder="例如：ww1234567890abcdef">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">应用凭证 (Secret) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addWechatSecret" required placeholder="例如：abcdefghijklmnopqrstuvwxyz123456">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">应用 ID (Agent ID) <span class="text-danger">*</span></label>
+                                <input type="number" class="form-control" id="addWechatAgentId" required placeholder="例如：1000002">
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-primary" onclick="saveWechatConfig()">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+"""
+
+WECHAT_JS = """
+    <script>
+        async function saveWechatConfig() {
+            const name = document.getElementById('addWechatName').value.trim();
+            const corpId = document.getElementById('addWechatCorpId').value.trim();
+            const secret = document.getElementById('addWechatSecret').value.trim();
+            const agentId = parseInt(document.getElementById('addWechatAgentId').value);
+            
+            if (!name || !corpId || !secret || !agentId) {
+                showToast('请填写所有必填项', 'danger');
+                return;
+            }
+            
+            const data = {
+                name: name,
+                corp_id: corpId,
+                corp_secret: secret,
+                agent_id: agentId,
+                enabled: 1
+            };
+            
+            const res = await apiPost('/api/wechat-configs', data);
+            if (res.error) {
+                showToast('创建失败: ' + res.error, 'danger');
+            } else {
+                showToast('配置组已创建');
+                setTimeout(() => location.reload(), 500);
+            }
+        }
+        
+        async function editWechatConfig(configId) {
+            // TODO: 实现编辑功能
+            showToast('编辑功能开发中', 'info');
+        }
+        
+        async function deleteWechatConfig(configId) {
+            if (!confirm('确定要删除此配置组吗？')) return;
+            await apiDelete(`/api/wechat-configs/${configId}`);
+            showToast('配置组已删除');
+            setTimeout(() => location.reload(), 500);
+        }
+    </script>
+"""
+
 
 SETTINGS_CONTENT = """
         <div class="page-header">
@@ -1022,8 +1242,8 @@ SETTINGS_CONTENT = """
                 <h6>快速开始</h6>
                 <ol>
                     <li>填写 TMDB API Token（必填）</li>
-                    <li>在"端口管理"中添加 Emby/Jellyfin 服务器的 Webhook 端口</li>
-                    <li>为每个端口配置推送渠道（企业微信/Telegram/Bark）</li>
+                    <li>在"企业微信"页面添加企业微信配置组</li>
+                    <li>在"端口管理"中添加端口，选择企业微信配置组和发送对象</li>
                     <li>在 Emby/Jellyfin 控制台中配置 Webhook 地址</li>
                 </ol>
                 
@@ -1087,18 +1307,3 @@ SETTINGS_JS = """
         }
     </script>
 """
-
-
-def create_app(pm=None):
-    """Create and return Flask app, optionally with port manager reference."""
-    global port_manager
-    port_manager = pm
-    return app
-
-
-def run_web_ui(web_port=5000, pm=None):
-    """Run the Web UI server."""
-    global port_manager
-    port_manager = pm
-    log.logger.info(f"Web UI starting on http://0.0.0.0:{web_port}")
-    app.run(host="0.0.0.0", port=web_port, debug=False, use_reloader=False)

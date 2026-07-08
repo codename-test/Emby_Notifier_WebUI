@@ -17,14 +17,14 @@ import media
 import port_manager
 from web_ui import run_web_ui
 
-AUTHOR = "xu4n_ch3n"
-VERSION = "5.0.0"
-UPDATETIME = "2025-07-08"
+AUTHOR = "codename-test"
+VERSION = "1.0.0"
+UPDATETIME = "2026-07-08"
 DESCRIPTION = (
-    "Emby Notifier - Media notification service for Emby/Jellyfin Server. "
+    "Emby Notifier WebUI - 基于 Emby Notifier 的二次开发版本，新增 WebUI 管理界面。"
     "Multi-port, WebUI, DND support."
 )
-REPOSITORY = "https://github.com/Ccccx159/Emby_Notifier"
+REPOSITORY = "https://github.com/codename-test/Emby_Notifier_WebUI"
 
 WELCOME = f"""
 ███████╗███╗   ███╗██████╗ ██╗   ██╗    ███╗   ██╗ ██████╗ ████████╗██╗███████╗██╗███████╗██████╗
