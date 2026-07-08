@@ -44,10 +44,16 @@
 ### Docker 部署（推荐）
 
 ```bash
+# 直接拉取 Docker Hub 镜像
+docker run -d --name emby-notifier \
+  --network host \
+  -e WEB_PORT=5000 \
+  -v emby_data:/data \
+  codename-test/emby_notifier_webui:latest
+
+# 或使用 docker-compose
 git clone https://github.com/codename-test/Emby_Notifier_WebUI.git
 cd Emby_Notifier_WebUI
-
-# 直接拉取 GitHub 自动构建的镜像
 docker compose up -d
 ```
 

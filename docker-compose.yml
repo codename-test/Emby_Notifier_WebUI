@@ -1,9 +1,11 @@
 version: '3'
 services:
   emby_notifier:
-    # 使用 GitHub 自动构建的镜像（推荐）
-    image: ghcr.io/codename-test/emby_notifier_webui:latest
-    # 如需本地构建，注释掉 image 行，取消下面的注释：
+    # Docker Hub 镜像（推荐）
+    image: codename-test/emby_notifier_webui:latest
+    # 或使用 GitHub ghcr.io 镜像：
+    # image: ghcr.io/codename-test/emby_notifier_webui:latest
+    # 如需本地构建：
     # build:
     #   context: .
     #   dockerfile: Dockerfile
