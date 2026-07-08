@@ -1,0 +1,28 @@
+# Database
+*.db
+
+# Temp files
+_tmp_*.json
+
+# Logs
+*.log
+/var/tmp/emby_notifier/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env

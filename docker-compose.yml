@@ -1,0 +1,34 @@
+version: '3'
+services:
+  emby_notifier:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: emby_notifier
+    environment:
+      - TZ=Asia/Shanghai
+      # ── 必填参数 ──
+      - TMDB_API_TOKEN=<Your TMDB API Token>
+      # ── WebUI 配置 ──
+      - WEB_PORT=5000            # WebUI 端口，默认 5000
+      - DB_PATH=/data/emby_notifier.db
+      # ── 可选参数 ──
+      - TVDB_API_KEY=            # TVDB API Key（可选，辅助剧集匹配）
+      - TMDB_IMAGE_DOMAIN=https://image.tmdb.org  # TMDB 图片域名（可配代理加速）
+      - LOG_LEVEL=INFO           # [DEBUG, INFO, WARNING]
+      - LOG_EXPORT=False         # 是否输出日志到文件
+      - LOG_PATH=/var/tmp/emby_notifier/
+      # ── 企业微信全局默认值（可选，可在 WebUI 中按端口覆盖）──
+      - WECHAT_MSG_TYPE=text     # 微信消息类型: text / news
+    volumes:
+      - emby_data:/data
+    network_mode: "bridge"
+    ports:
+      - "5000:5000"    # WebUI
+      # 媒体服务端口在 WebUI 中动态配置，如需固定映射可在此添加
+      # - "8001:8001"
+      # - "8002:8002"
+    restart: unless-stopped
+
+volumes:
+  emby_data:
