@@ -170,3 +170,4 @@ Emby_Notifier/
 ## License
 
 MIT
+# trigger ci rebuild
