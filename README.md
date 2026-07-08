@@ -47,12 +47,13 @@
 git clone https://github.com/codename-test/Emby_Notifier_WebUI.git
 cd Emby_Notifier_WebUI
 
-# 可选：修改 docker-compose.yml 中的 WEB_PORT
-# 启动（host 网络模式，支持动态端口监听）
+# 直接拉取 GitHub 自动构建的镜像
 docker compose up -d
 ```
 
-访问 `http://你的IP:5000`（或你自定义的端口）。
+访问 `http://你的IP:5000`（或你在 `docker-compose.yml` 中修改的端口）。
+
+> **说明**：容器使用 `--network host`，因为媒体服务监听端口在 WebUI 中动态配置，host 模式避免端口映射的复杂性。
 
 ### 手动部署
 
@@ -152,6 +153,7 @@ Emby_Notifier/
 ├── requirements.txt     # 依赖
 ├── Dockerfile           # Docker 镜像
 ├── docker-compose.yml   # Docker Compose（host 网络）
+├── .github/workflows/   # GitHub Actions 自动构建
 └── README.md
 ```
 

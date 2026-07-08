@@ -1,15 +1,16 @@
 version: '3'
 services:
   emby_notifier:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # 使用 GitHub 自动构建的镜像（推荐）
+    image: ghcr.io/codename-test/emby_notifier_webui:latest
+    # 如需本地构建，注释掉 image 行，取消下面的注释：
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: emby_notifier
     environment:
       - TZ=Asia/Shanghai
-      # WebUI 端口，默认 5000，可通过此处修改
       - WEB_PORT=5000
-      # 数据库存放路径
       - DB_PATH=/data/emby_notifier.db
       # 可选参数
       - TVDB_API_KEY=
