@@ -44,49 +44,33 @@
 ### Docker 部署（推荐）
 
 ```bash
-# 直接拉取 Docker Hub 镜像
-docker run -d --name emby-notifier \
+docker run -d \
+  --name emby-notifier \
   --network host \
   -e WEB_PORT=5000 \
   -v emby_data:/data \
   codenametest/emby_notifier_webui:latest
+```
 
-# 或使用 docker-compose
-git clone https://github.com/codename-test/Emby_Notifier_WebUI.git
-cd Emby_Notifier_WebUI
+或使用 docker-compose：
+
+```bash
+wget https://raw.githubusercontent.com/codename-test/Emby_Notifier_WebUI/main/docker-compose.yml
 docker compose up -d
 ```
 
-访问 `http://你的IP:5000`（或你在 `docker-compose.yml` 中修改的端口）。
-
-> **说明**：容器使用 `--network host`，因为媒体服务监听端口在 WebUI 中动态配置，host 模式避免端口映射的复杂性。
+访问 `http://你的IP:5000`。
 
 ### 手动部署
 
 ```bash
 git clone https://github.com/codename-test/Emby_Notifier_WebUI.git
 cd Emby_Notifier_WebUI
-
 pip install -r requirements.txt
-
-# 默认 WebUI 端口 5000
 python3 main.py
-
-# 或指定端口
-WEB_PORT=8080 python3 main.py
 ```
 
-### 容器镜像构建
-
-```bash
-docker build -t emby-notifier-webui .
-docker run -d --name emby-notifier --network host \
-  -e WEB_PORT=5000 \
-  -v emby_data:/data \
-  emby-notifier-webui
-```
-
-> **说明**：容器必须使用 `--network host`，因为媒体服务监听端口在 WebUI 中动态配置，host 模式避免端口映射的复杂性。
+指定端口：`WEB_PORT=8080 python3 main.py`
 
 ### 配置流程
 
@@ -170,4 +154,3 @@ Emby_Notifier/
 ## License
 
 MIT
-# trigger ci rebuild
