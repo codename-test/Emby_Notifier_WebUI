@@ -10,6 +10,7 @@ import asyncio
 import threading
 import time
 import json
+import socket
 import log
 import media
 import my_utils
@@ -52,8 +53,8 @@ class PortServer:
         asyncio.set_event_loop(self.loop)
         try:
             self.loop.run_until_complete(self._serve())
-        except Exception:
-            pass
+        except Exception as e:
+            log.logger.error(f"[Port {self.port_number}] Server error: {e}")
         finally:
             try:
                 # 清理所有待处理的任务
@@ -153,6 +154,21 @@ class PortServer:
         log.logger.info(f"Port server stopped: port={self.port_number}")
 
 
+def check_port_available(port_number: int) -> tuple[bool, str]:
+    """检查端口是否可用"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)
+    try:
+        result = s.connect_ex(("127.0.0.1", port_number))
+        if result == 0:
+            return False, f"端口 {port_number} 已被占用"
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+    finally:
+        s.close()
+
+
 class PortManager:
     """管理所有端口服务器的生命周期"""
 
@@ -175,6 +191,12 @@ class PortManager:
 
         if port_id in self.servers:
             log.logger.warning(f"Port {port_config['port']} already running")
+            return False
+
+        # 检查端口是否被占用
+        ok, err = check_port_available(port_config["port"])
+        if not ok:
+            log.logger.error(f"Port {port_config['port']}: {err}")
             return False
 
         server = PortServer(port_id, port_config["port"])

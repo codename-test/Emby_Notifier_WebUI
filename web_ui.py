@@ -11,6 +11,7 @@ import threading
 import log
 import db
 import media
+import port_manager as pm_module
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
 app = Flask(__name__)
@@ -120,7 +121,9 @@ def wechat_page():
     """企业微信配置页面"""
     wechat_configs = db.get_all_wechat_configs()
     from flask import render_template_string
-    content_rendered = render_template_string(WECHAT_CONTENT, wechat_configs=wechat_configs)
+    import json as _json
+    wechat_configs_json = _json.dumps(wechat_configs, default=str)
+    content_rendered = render_template_string(WECHAT_CONTENT, wechat_configs=wechat_configs, wechat_configs_json=wechat_configs_json)
     html = BASE_TEMPLATE.replace("{title}", "企业微信配置") \
         .replace("{dashboard_active}", "") \
         .replace("{ports_active}", "") \
@@ -219,8 +222,15 @@ def api_get_ports():
 @app.route("/api/ports", methods=["POST"])
 def api_create_port():
     data = request.json
+    port_number = data["port"]
+    
+    # 检查端口是否被占用
+    ok, err = pm_module.check_port_available(port_number)
+    if not ok:
+        return jsonify({"error": err}), 400
+    
     port_id = db.create_port(
-        port_number=data["port"],
+        port_number=port_number,
         server_name=data.get("server_name", ""),
         server_type=data.get("server_type", "Emby"),
         server_url=data.get("server_url", ""),
@@ -241,6 +251,13 @@ def api_update_port(port_id):
     old_port = db.get_port(port_id)
     if not old_port:
         return jsonify({"error": "Port not found"}), 404
+
+    # 如果端口号变更，检查新端口是否可用
+    new_port = data.get("port", old_port["port"])
+    if new_port != old_port["port"]:
+        ok, err = pm_module.check_port_available(new_port)
+        if not ok:
+            return jsonify({"error": err}), 400
 
     was_running = port_manager.is_running(port_id) if port_manager else False
     if was_running:
@@ -431,8 +448,19 @@ def api_test_push(port_id):
         return jsonify({"error": "没有启用的推送渠道"}), 400
     
     try:
-        media.send_test_notification(port_id)
-        return jsonify({"success": 1, "failed": 0, "total": 1})
+        results = media.send_test_notification(port_id)
+        # 检查实际结果
+        errors = [v for k, v in results.items() if k.endswith("_error")]
+        success_count = len([v for k, v in results.items() if v == "success"])
+        failed_count = len(errors)
+        if failed_count > 0:
+            return jsonify({
+                "success": success_count,
+                "failed": failed_count,
+                "total": success_count + failed_count,
+                "errors": errors
+            }), 200
+        return jsonify({"success": success_count, "failed": 0, "total": success_count})
     except Exception as e:
         log.logger.error(f"Test push failed: {e}")
         return jsonify({"error": str(e), "success": 0, "failed": 1, "total": 1}), 500
@@ -1014,8 +1042,11 @@ PORTS_JS = """
             const res = await apiPost(`/api/ports/${portId}/test`);
             if (res.error) {
                 showToast('测试失败: ' + res.error, 'danger');
+            } else if (res.failed > 0) {
+                const errList = (res.errors || []).join(', ');
+                showToast(`测试完成: ${res.success} 成功, ${res.failed} 失败 — ${errList}`, 'warning');
             } else {
-                showToast(`测试完成: 成功 ${res.success} 个，失败 ${res.failed} 个`);
+                showToast(`测试完成: ${res.success} 个全部成功`);
             }
         }
     </script>
@@ -1166,7 +1197,7 @@ QUEUE_JS = """
 WECHAT_CONTENT = """
         <div class="page-header d-flex justify-content-between align-items-center">
             <h2><i class="bi bi-wechat"></i> 企业微信配置</h2>
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addWechatModal">
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addWechatModal" onclick="resetWechatModal()">
                 <i class="bi bi-plus-lg"></i> 添加配置组
             </button>
         </div>
@@ -1238,10 +1269,11 @@ WECHAT_CONTENT = """
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">添加企业微信配置</h5>
+                        <h5 class="modal-title" id="addWechatModalTitle">添加企业微信配置</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
+                        <input type="hidden" id="editWechatId" value="">
                         <form id="addWechatForm">
                             <div class="mb-3">
                                 <label class="form-label">配置组名称 <span class="text-danger">*</span></label>
@@ -1272,7 +1304,11 @@ WECHAT_CONTENT = """
 
 WECHAT_JS = """
     <script>
+        // 企业微信配置数据（供编辑使用）
+        const wechatConfigsData = {{ wechat_configs_json|safe }};
+        
         async function saveWechatConfig() {
+            const editId = document.getElementById('editWechatId').value;
             const name = document.getElementById('addWechatName').value.trim();
             const corpId = document.getElementById('addWechatCorpId').value.trim();
             const secret = document.getElementById('addWechatSecret').value.trim();
@@ -1291,18 +1327,42 @@ WECHAT_JS = """
                 enabled: 1
             };
             
-            const res = await apiPost('/api/wechat-configs', data);
-            if (res.error) {
-                showToast('创建失败: ' + res.error, 'danger');
+            let res;
+            if (editId) {
+                res = await apiPut(`/api/wechat-configs/${editId}`, data);
             } else {
-                showToast('配置组已创建');
+                res = await apiPost('/api/wechat-configs', data);
+            }
+            
+            if (res.error) {
+                showToast('保存失败: ' + res.error, 'danger');
+            } else {
+                showToast(editId ? '配置已更新' : '配置组已创建');
                 setTimeout(() => location.reload(), 500);
             }
         }
         
-        async function editWechatConfig(configId) {
-            // TODO: 实现编辑功能
-            showToast('编辑功能开发中', 'info');
+        function editWechatConfig(configId) {
+            const cfg = wechatConfigsData.find(c => c.id === configId);
+            if (!cfg) { showToast('配置未找到', 'danger'); return; }
+            
+            document.getElementById('editWechatId').value = cfg.id;
+            document.getElementById('addWechatName').value = cfg.name || '';
+            document.getElementById('addWechatCorpId').value = cfg.corp_id || '';
+            document.getElementById('addWechatSecret').value = cfg.corp_secret || '';
+            document.getElementById('addWechatAgentId').value = cfg.agent_id || 0;
+            document.getElementById('addWechatModalTitle').textContent = '编辑企业微信配置';
+            
+            new bootstrap.Modal(document.getElementById('addWechatModal')).show();
+        }
+        
+        function resetWechatModal() {
+            document.getElementById('editWechatId').value = '';
+            document.getElementById('addWechatName').value = '';
+            document.getElementById('addWechatCorpId').value = '';
+            document.getElementById('addWechatSecret').value = '';
+            document.getElementById('addWechatAgentId').value = '';
+            document.getElementById('addWechatModalTitle').textContent = '添加企业微信配置';
         }
         
         async function deleteWechatConfig(configId) {

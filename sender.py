@@ -30,13 +30,17 @@ class PortSender:
         self.channels = {}
         self._wechat_token_cache = {}
 
+        # 从端口记录读取 wechat_config_id（存在 ports 表而非 channels 表）
+        port = db.get_port(port_id)
+        port_wc_id = port.get("wechat_config_id") if port else None
+
         for ch in enabled_channels:
             ch_type = ch["channel_type"]
             ch_config = ch.get("config", {})
             
             # 企业微信：将 wechat_config_id 解析为实际凭证
             if ch_type == "wechat_work":
-                wc_id = ch_config.get("wechat_config_id")
+                wc_id = ch_config.get("wechat_config_id") or port_wc_id
                 if wc_id:
                     try:
                         wc_id_int = int(wc_id)
