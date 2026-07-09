@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -94,4 +94,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.py
           git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
-          git push
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
