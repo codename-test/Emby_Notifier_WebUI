@@ -175,9 +175,12 @@ class PortSender:
         title = template["title"].format(**vars_map) if template.get("title") else "更新通知"
         desc = template["description"].format(**vars_map) if template.get("description") else str(media)
         
-        # 封面图
-        pic_field = template.get("picurl_episode", "media_still") if media.get("media_type") == "Episode" else template.get("picurl_movie", "media_backdrop")
-        picurl = media.get(pic_field, "")
+        # 封面图（enable_image=0 时不发图）
+        if template.get("enable_image", 1):
+            pic_field = template.get("picurl_episode", "media_still") if media.get("media_type") == "Episode" else template.get("picurl_movie", "media_backdrop")
+            picurl = media.get(pic_field, "")
+        else:
+            picurl = ""
 
         link = media.get("media_tmdburl", "")
 

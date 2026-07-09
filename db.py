@@ -109,9 +109,20 @@ def init_db():
             description TEXT NOT NULL DEFAULT '',
             picurl_movie TEXT DEFAULT 'media_backdrop',
             picurl_episode TEXT DEFAULT 'media_still',
+            enable_image INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    # 迁移：添加 enable_image 列（兼容旧数据库）
+    try:
+        conn.execute("ALTER TABLE push_templates ADD COLUMN enable_image INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    # 迁移：添加 template_id 列（兼容旧数据库）
+    try:
+        conn.execute("ALTER TABLE ports ADD COLUMN template_id INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     # Ensure DND settings row exists
     conn.execute(
         "INSERT OR IGNORE INTO dnd_settings (id, enabled, start_time, end_time) "
@@ -125,21 +136,21 @@ def init_db():
     count = conn.execute("SELECT COUNT(*) FROM push_templates").fetchone()[0]
     if count == 0:
         conn.execute(
-            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode) "
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image) "
             "VALUES (1, '标准', '{type}更新', "
             "'{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', "
-            "'media_backdrop', 'media_still')"
+            "'media_backdrop', 'media_still', 1)"
         )
         conn.execute(
-            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode) "
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image) "
             "VALUES (2, '简化通用', '更新通知', "
             "'{name} ({year}){episode}\n\n {date}\n⭐ {rating}', "
-            "'', '')"
+            "'', '', 0)"
         )
     else:
         # 迁移旧模板
-        conn.execute("UPDATE push_templates SET name='标准', title='{type}更新', description='{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', picurl_movie='media_backdrop', picurl_episode='media_still' WHERE id=1")
-        conn.execute("UPDATE push_templates SET name='简化通用', title='更新通知', description='{name} ({year}){episode}\n\n {date}\n⭐ {rating}', picurl_movie='', picurl_episode='' WHERE id=2")
+        conn.execute("UPDATE push_templates SET name='标准', title='{type}更新', description='{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', picurl_movie='media_backdrop', picurl_episode='media_still', enable_image=1 WHERE id=1")
+        conn.execute("UPDATE push_templates SET name='简化通用', title='更新通知', description='{name} ({year}){episode}\n\n {date}\n⭐ {rating}', picurl_movie='', picurl_episode='', enable_image=0 WHERE id=2")
         # 删除旧的剧集更新模板（id=3 如果存在）
         conn.execute("DELETE FROM push_templates WHERE id=3")
     conn.commit()
@@ -560,12 +571,12 @@ def get_template(template_id):
     return dict(row) if row else None
 
 
-def create_template(name, title, description, picurl_movie="media_backdrop", picurl_episode="media_still"):
+def create_template(name, title, description, picurl_movie="media_backdrop", picurl_episode="media_still", enable_image=1):
     """创建推送模板"""
     conn = _get_conn()
     cursor = conn.execute(
-        "INSERT INTO push_templates (name, title, description, picurl_movie, picurl_episode) VALUES (?, ?, ?, ?, ?)",
-        (name, title, description, picurl_movie, picurl_episode)
+        "INSERT INTO push_templates (name, title, description, picurl_movie, picurl_episode, enable_image) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, title, description, picurl_movie, picurl_episode, enable_image)
     )
     conn.commit()
     return cursor.lastrowid
@@ -574,7 +585,7 @@ def create_template(name, title, description, picurl_movie="media_backdrop", pic
 def update_template(template_id, **kwargs):
     """更新推送模板"""
     conn = _get_conn()
-    allowed = {"name", "title", "description", "picurl_movie", "picurl_episode"}
+    allowed = {"name", "title", "description", "picurl_movie", "picurl_episode", "enable_image"}
     fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
     if not fields:
         return False

@@ -31,6 +31,7 @@ class PortServer:
         self._runner = None
         self._worker_task = None
         self._running = False
+        self._stop_event = None  # asyncio.Event set when stopping
 
     def start(self):
         """在独立线程中启动 aiohttp 服务器"""
@@ -72,6 +73,7 @@ class PortServer:
 
     async def _serve(self):
         self._queue = asyncio.Queue()
+        self._stop_event = asyncio.Event()
 
         app = web.Application()
         app["port_id"] = self.port_id
@@ -89,9 +91,8 @@ class PortServer:
         # Worker 协程：消费消息队列
         self._worker_task = asyncio.create_task(self._worker())
         try:
-            # 保持运行直到被取消
-            while self._running:
-                await asyncio.sleep(0.5)
+            # 等待停止信号，而非轮询
+            await self._stop_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
@@ -147,8 +148,8 @@ class PortServer:
     def stop(self):
         """停止服务器"""
         self._running = False
-        if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
+        if self._stop_event and self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self._stop_event.set)
         if self.thread:
             self.thread.join(timeout=5)
         log.logger.info(f"Port server stopped: port={self.port_number}")

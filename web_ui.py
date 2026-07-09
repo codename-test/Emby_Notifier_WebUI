@@ -134,7 +134,7 @@ def wechat_page():
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
-        .replace("{extra_js}", WECHAT_JS)
+        .replace("{extra_js}", WECHAT_JS.replace("{{ wechat_configs_json|safe }}", wechat_configs_json))
     return html
 @app.route("/logs")
 def logs_page():
@@ -549,6 +549,7 @@ def api_create_template():
         description=data.get("description", ""),
         picurl_movie=data.get("picurl_movie", "media_backdrop"),
         picurl_episode=data.get("picurl_episode", "media_still"),
+        enable_image=data.get("enable_image", 1),
     )
     return jsonify({"id": tid})
 
@@ -663,7 +664,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             <a class="nav-link {settings_active}" href="/settings"><i class="bi bi-gear-fill"></i> 系统设置</a>
         </div>
         <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;">
-            <small class="text-muted">v5.0.0</small>
+            <small class="text-muted">v1.0.0</small>
         </div>
     </nav>
 
@@ -1591,7 +1592,7 @@ TEMPLATES_CONTENT = """
                 <div class="card">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start mb-2">
-                            <h5 class="card-title mb-0">{{ t.name }}</h5>
+                            <h5 class="card-title mb-0">{{ t.name }} {% if not t.get('enable_image', 1) %}<span class="badge bg-secondary ms-1">无图</span>{% endif %}</h5>
                             <div>
                                 <button class="btn btn-icon btn-outline-primary btn-sm" onclick="openEditTemplate({{ t.id }})" title="\u7f16\u8f91"><i class="bi bi-pencil"></i></button>
                                 <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteTemplate({{ t.id }})" title="\u5220\u9664"><i class="bi bi-trash"></i></button>
@@ -1645,6 +1646,10 @@ TEMPLATES_CONTENT = """
                                 </select>
                             </div>
                         </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="editEnableImage" checked>
+                            <label class="form-check-label" for="editEnableImage">启用封面图片</label>
+                        </div>
                         <div class="bg-light p-2 rounded small">
                             <strong>\u53ef\u7528\u53d8\u91cf\uff1a</strong>
                             <code>{type}</code> \u7535\u5f71/\u5267\u96c6
@@ -1679,6 +1684,7 @@ TEMPLATES_JS = """
             document.getElementById('editTemplateDesc').value = '';
             document.getElementById('editPicMovie').value = 'media_backdrop';
             document.getElementById('editPicEpisode').value = 'media_still';
+            document.getElementById('editEnableImage').checked = true;
             new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
         }
 
@@ -1693,6 +1699,7 @@ TEMPLATES_JS = """
             document.getElementById('editTemplateDesc').value = t.description || '';
             document.getElementById('editPicMovie').value = t.picurl_movie || 'media_backdrop';
             document.getElementById('editPicEpisode').value = t.picurl_episode || 'media_still';
+            document.getElementById('editEnableImage').checked = t.enable_image !== 0;
             new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
         }
 
@@ -1703,7 +1710,8 @@ TEMPLATES_JS = """
                 title: document.getElementById('editTemplateTitle').value.trim(),
                 description: document.getElementById('editTemplateDesc').value,
                 picurl_movie: document.getElementById('editPicMovie').value,
-                picurl_episode: document.getElementById('editPicEpisode').value
+                picurl_episode: document.getElementById('editPicEpisode').value,
+                enable_image: document.getElementById('editEnableImage').checked ? 1 : 0
             };
             if (!data.name) { showToast('\u8bf7\u8f93\u5165\u6a21\u677f\u540d\u79f0', 'danger'); return; }
             let res;
