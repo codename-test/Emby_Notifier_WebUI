@@ -230,7 +230,22 @@ class Episode(IMedia):
 def jellyfin_msg_preprocess(msg):
     """将 Jellyfin 消息格式统一为 Emby 格式"""
     data = json.loads(msg)
-    if "Emby" not in data and "Jellyfin" in data:
+    # Jellyfin webhook flat format: {NotificationType, Name, ItemType, ...}
+    if "NotificationType" in data and "Event" not in data:
+        nt = data.get("NotificationType", "")
+        if nt in ("ItemAdded",):
+            data["Event"] = "library.new"
+        # Map ItemType -> Type (used by create_media)
+        if "ItemType" in data and "Type" not in data:
+            data["Type"] = data.pop("ItemType")
+        # Wrap in Emby key
+        emby_fields = {}
+        for k, v in list(data.items()):
+            if k not in ("Event",):
+                emby_fields[k] = data.pop(k)
+        data["Emby"] = emby_fields
+    # Legacy Jellyfin wrapper: {Jellyfin: {...}} -> {Emby: {...}}
+    elif "Emby" not in data and "Jellyfin" in data:
         data["Emby"] = data.pop("Jellyfin")
     if "ServerType" not in data.get("Emby", {}):
         data.setdefault("Emby", {})["ServerType"] = "Jellyfin"
