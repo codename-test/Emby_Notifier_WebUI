@@ -108,6 +108,24 @@ def get_external_ids(media_type, tmdb_id):
         )
 
 
+def find_by_tvdb_id(tvdb_id):
+    """通过 TVDB ID 在 TMDB 查找对应条目，返回 (type, tmdb_id) 或 (None, None)"""
+    headers = get_headers()
+    if not headers:
+        return None, "TMDB_API_TOKEN not configured"
+    try:
+        url = f"{TMDB_API}/find/{tvdb_id}?external_source=tvdb_id"
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        # Try TV results first (for Episode), then Movie
+        for item in data.get("tv_results", []) + data.get("movie_results", []):
+            return item.get("id"), None
+        return None, f"No TMDB match for TVDB ID {tvdb_id}"
+    except requests.exceptions.RequestException as e:
+        return None, f"TMDB find by TVDB {tvdb_id} failed: {e}"
+
+
 def get_movie_details(movie_id):
     """
     Fetches the details for a given movie ID.

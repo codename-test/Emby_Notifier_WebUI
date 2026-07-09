@@ -60,6 +60,12 @@ class IMedia(abc.ABC):
 
     def _get_tmdb_id(self):
         """通过 TMDB 搜索 + TVDB 辅助匹配获取准确的 TMDB ID"""
+        # If TMDB ID already known from ProviderIds, skip search
+        existing_tmdb = self.info_["ProviderIds"].get("Tmdb", "")
+        if existing_tmdb and existing_tmdb != "-1":
+            log.logger.info(f"TMDB ID already known: {existing_tmdb}")
+            return
+
         log.logger.info(f"Searching TMDB: {self.info_['Name']} ({self.info_['PremiereYear']})")
         medias, err = tmdb_api.search_media(
             self.info_["Type"], self.info_["Name"], self.info_["PremiereYear"]
@@ -86,6 +92,16 @@ class IMedia(abc.ABC):
             )
             self.info_["ProviderIds"]["Tmdb"] = str(medias[0]["id"])
         else:
+            # Name search failed, try direct lookup by TVDB ID
+            Tvdb_id = self.info_["ProviderIds"].get("Tvdb", "")
+            if Tvdb_id and Tvdb_id != "-1":
+                log.logger.info(f"Name search failed, trying TVDB ID: {Tvdb_id}")
+                tmdb_id, err = tmdb_api.find_by_tvdb_id(Tvdb_id)
+                if tmdb_id:
+                    self.info_["ProviderIds"]["Tmdb"] = str(tmdb_id)
+                    return
+                if err:
+                    log.logger.warning(err)
             raise Exception(f"No media found on TMDB for {self.info_['Name']}")
 
 
@@ -238,6 +254,14 @@ def jellyfin_msg_preprocess(msg):
         # Map ItemType -> Type (used by create_media)
         if "ItemType" in data and "Type" not in data:
             data["Type"] = data.pop("ItemType")
+        # Convert flat Provider_* fields to ProviderIds dict
+        provider_ids = {}
+        for k in list(data.keys()):
+            if k.startswith("Provider_"):
+                provider_name = k[9:]  # e.g. "tvdb", "imdb", "tmdb"
+                provider_ids[provider_name.capitalize()] = data.pop(k)
+        if provider_ids:
+            data["ProviderIds"] = provider_ids
         # Wrap in Emby key
         emby_fields = {}
         for k, v in list(data.items()):
