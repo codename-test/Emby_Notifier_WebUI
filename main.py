@@ -17,9 +17,9 @@ import db
 import media
 import port_manager
 from web_ui import run_web_ui
+from version import __version__ as VERSION
 
 AUTHOR = "codename-test"
-VERSION = "1.0.0"
 UPDATETIME = "2026-07-08"
 DESCRIPTION = (
     "Emby Notifier WebUI - 基于 Emby Notifier 的二次开发版本，新增 WebUI 管理界面。"

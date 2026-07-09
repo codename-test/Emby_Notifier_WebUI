@@ -12,6 +12,7 @@ import log
 import db
 import media
 import port_manager as pm_module
+from version import __version__
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 
 app = Flask(__name__)
@@ -182,9 +183,17 @@ def templates_page():
 @app.route("/settings")
 def settings():
     """系统设置页面"""
+    import os as _os
     config = db.get_all_system_config()
+    ports = db.get_all_ports()
     from flask import render_template_string
-    content_rendered = render_template_string(SETTINGS_CONTENT, config=config)
+    content_rendered = render_template_string(
+        SETTINGS_CONTENT,
+        config=config,
+        version=__version__,
+        port_count=len(ports),
+        db_path=_os.getenv("DB_PATH", "emby_notifier.db"),
+    )
     html = BASE_TEMPLATE.replace("{title}", "系统设置") \
         .replace("{dashboard_active}", "") \
         .replace("{ports_active}", "") \
@@ -664,7 +673,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             <a class="nav-link {settings_active}" href="/settings"><i class="bi bi-gear-fill"></i> 系统设置</a>
         </div>
         <div style="position:absolute;bottom:16px;left:0;right:0;text-align:center;">
-            <small class="text-muted">v1.0.0</small>
+            <small class="text-muted">{version}</small>
         </div>
     </nav>
 
@@ -707,7 +716,8 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>"""
 
-
+# Inject current version into the base template
+BASE_TEMPLATE = BASE_TEMPLATE.replace("{version}", f"v{__version__}")
 
 INDEX_CONTENT = """
         <div class="page-header d-flex justify-content-between align-items-center">
@@ -1444,6 +1454,21 @@ SETTINGS_CONTENT = """
                         请求格式: application/json
                     </code>
                 </div>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header py-3">
+                <i class="bi bi-info-circle-fill me-2"></i>系统信息
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless mb-0">
+                    <tr><td class="text-muted" style="width:120px">版本</td><td><code>v{{ version }}</code></td></tr>
+                    <tr><td class="text-muted">仓库</td><td><a href="https://github.com/codename-test/Emby_Notifier_WebUI" target="_blank">codename-test/Emby_Notifier_WebUI</a></td></tr>
+                    <tr><td class="text-muted">作者</td><td>codename-test</td></tr>
+                    <tr><td class="text-muted">端口数</td><td>{{ port_count }}</td></tr>
+                    <tr><td class="text-muted">数据库</td><td><code class="text-muted small">{{ db_path }}</code></td></tr>
+                </table>
             </div>
         </div>
 """
