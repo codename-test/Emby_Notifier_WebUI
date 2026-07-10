@@ -129,16 +129,13 @@ python3 main.py
 ```
 Emby_Notifier/
 ├── main.py              # 主程序
-── db.py                # 数据库管理
-── web_ui.py            # WebUI 界面
+├── db.py                # 数据库管理
+├── web_ui.py            # WebUI 界面
 ├── port_manager.py      # 多端口管理器
 ├── media.py             # 媒体处理
 ├── sender.py            # 推送发送器（多通道架构）
 ├── tmdb_api.py          # TMDB API
 ├── tvdb_api.py          # TVDB API
-├── wxapp.py             # 企业微信（旧版独立文件）
-├── tgbot.py             # Telegram（旧版独立文件）
-── bark.py              # Bark（旧版独立文件）
 ├── channels/            # 多通道模块
 │   ├── __init__.py      # 基类 + 工厂模式
 │   ├── wechat_work_api.py   # 企业微信应用
