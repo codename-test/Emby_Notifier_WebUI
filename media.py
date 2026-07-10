@@ -47,6 +47,7 @@ class IMedia(abc.ABC):
             "tv_season": 0,
             "tv_episode": 0,
             "tv_episode_name": "",
+            "tmdb_failed": False,
         }
         self.port_id_ = None
 
@@ -373,11 +374,31 @@ def _fetch_and_send(emby_data, port_id):
     media_obj.parse_info(emby_data)
     log.logger.info(f"[Port {port_id}] Processing: {media_obj}")
 
-    try:
-        media_obj.get_details()
-    except Exception as e:
-        log.logger.error(f"[Port {port_id}] Failed to get media details: {e}")
-        return
+    # 检查端口使用的模板是否无图，无图模板不需要 TMDB
+    port_config = db.get_port(port_id)
+    template = db.get_template(port_config.get("template_id", 1))
+    skip_tmdb = template and not template.get("enable_image", 1)
+
+    if skip_tmdb:
+        log.logger.info(f"[Port {port_id}] No-image template '{template['name']}', skipping TMDB fetch")
+        media_obj.media_detail_["tmdb_failed"] = True
+        media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
+        media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
+        media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
+        media_obj.media_detail_["media_rating"] = emby_data.get("CommunityRating", 0) or 0
+        media_obj.media_detail_["media_tmdburl"] = ""
+    else:
+        try:
+            media_obj.get_details()
+        except Exception as e:
+            log.logger.warning(f"[Port {port_id}] TMDB fetch failed: {e}, using fallback template")
+            media_obj.media_detail_["tmdb_failed"] = True
+            media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
+            media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
+            media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
+            media_obj.media_detail_["media_rating"] = emby_data.get("CommunityRating", 0) or 0
+            media_obj.media_detail_["media_tmdburl"] = ""
+            # fall through to push
 
     # 创建 Sender 并推送
     enabled_channels = db.get_enabled_channels(port_id)
@@ -385,7 +406,6 @@ def _fetch_and_send(emby_data, port_id):
         log.logger.warning(f"[Port {port_id}] No enabled channels, skipping push.")
         return
 
-    port_config = db.get_port(port_id)
     sender = PortSender(
         port_id,
         port_config.get("server_name", ""),

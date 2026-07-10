@@ -151,6 +151,13 @@ class PortSender:
         if not template:
             template = db.get_template(1)  # 默认影视更新
 
+        # TMDB 获取失败时自动切换到 fallback 模板
+        if media.get("tmdb_failed"):
+            fallback = db.get_fallback_template()
+            if fallback:
+                template = fallback
+                log.logger.info(f"[Port {self.port_id}] Using fallback template: {fallback.get('name', 'simplified')}")
+
         # 准备变量
         type_ch = "电影" if media.get("media_type") == "Movie" else "剧集"
         year = media.get("media_rel", "")[:4] if media.get("media_rel") else ""

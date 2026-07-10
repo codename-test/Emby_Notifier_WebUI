@@ -118,6 +118,11 @@ def init_db():
         conn.execute("ALTER TABLE push_templates ADD COLUMN enable_image INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # 迁移：添加 is_fallback 列
+    try:
+        conn.execute("ALTER TABLE push_templates ADD COLUMN is_fallback INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     # 迁移：添加 template_id 列（兼容旧数据库）
     try:
         conn.execute("ALTER TABLE ports ADD COLUMN template_id INTEGER DEFAULT 1")
@@ -136,21 +141,21 @@ def init_db():
     count = conn.execute("SELECT COUNT(*) FROM push_templates").fetchone()[0]
     if count == 0:
         conn.execute(
-            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image) "
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image, is_fallback) "
             "VALUES (1, '标准', '{type}更新', "
             "'{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', "
-            "'media_backdrop', 'media_still', 1)"
+            "'media_backdrop', 'media_still', 1, 0)"
         )
         conn.execute(
-            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image) "
-            "VALUES (2, '简化通用', '更新通知', "
+            "INSERT INTO push_templates (id, name, title, description, picurl_movie, picurl_episode, enable_image, is_fallback) "
+            "VALUES (2, '基础模板', '更新通知', "
             "'{name} ({year}){episode}\n\n {date}\n⭐ {rating}', "
-            "'', '', 0)"
+            "'', '', 0, 1)"
         )
     else:
         # 迁移旧模板
-        conn.execute("UPDATE push_templates SET name='标准', title='{type}更新', description='{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', picurl_movie='media_backdrop', picurl_episode='media_still', enable_image=1 WHERE id=1")
-        conn.execute("UPDATE push_templates SET name='简化通用', title='更新通知', description='{name} ({year}){episode}\n\n {date}\n⭐ {rating}', picurl_movie='', picurl_episode='', enable_image=0 WHERE id=2")
+        conn.execute("UPDATE push_templates SET name='标准', title='{type}更新', description='{name} ({year}){episode}\n\n 上映日期：{date}\n⭐ 评分：{rating}\n\n简介：{intro}', picurl_movie='media_backdrop', picurl_episode='media_still', enable_image=1, is_fallback=0 WHERE id=1")
+        conn.execute("UPDATE push_templates SET name='基础模板', title='更新通知', description='{name} ({year}){episode}\n\n {date}\n⭐ {rating}', picurl_movie='', picurl_episode='', enable_image=0, is_fallback=1 WHERE id=2")
         # 删除旧的剧集更新模板（id=3 如果存在）
         conn.execute("DELETE FROM push_templates WHERE id=3")
     conn.commit()
@@ -571,12 +576,12 @@ def get_template(template_id):
     return dict(row) if row else None
 
 
-def create_template(name, title, description, picurl_movie="media_backdrop", picurl_episode="media_still", enable_image=1):
+def create_template(name, title, description, picurl_movie="media_backdrop", picurl_episode="media_still", enable_image=1, is_fallback=0):
     """创建推送模板"""
     conn = _get_conn()
     cursor = conn.execute(
-        "INSERT INTO push_templates (name, title, description, picurl_movie, picurl_episode, enable_image) VALUES (?, ?, ?, ?, ?, ?)",
-        (name, title, description, picurl_movie, picurl_episode, enable_image)
+        "INSERT INTO push_templates (name, title, description, picurl_movie, picurl_episode, enable_image, is_fallback) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, title, description, picurl_movie, picurl_episode, enable_image, is_fallback)
     )
     conn.commit()
     return cursor.lastrowid
@@ -585,10 +590,17 @@ def create_template(name, title, description, picurl_movie="media_backdrop", pic
 def update_template(template_id, **kwargs):
     """更新推送模板"""
     conn = _get_conn()
-    allowed = {"name", "title", "description", "picurl_movie", "picurl_episode", "enable_image"}
+    allowed = {"name", "title", "description", "picurl_movie", "picurl_episode", "enable_image", "is_fallback"}
     fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
     if not fields:
         return False
+    # 回退模板强制关图（已有模板或本次设为回退都生效）
+    existing = conn.execute("SELECT is_fallback FROM push_templates WHERE id=?", (template_id,)).fetchone()
+    if fields.get("is_fallback") == 1 or (existing and existing[0] == 1):
+        fields["enable_image"] = 0
+    # 设置回退时取消其他回退标记
+    if fields.get("is_fallback") == 1:
+        conn.execute("UPDATE push_templates SET is_fallback=0 WHERE id!=?", (template_id,))
     set_clause = ", ".join(f"{k}=?" for k in fields)
     conn.execute(
         f"UPDATE push_templates SET {set_clause} WHERE id=?",
@@ -596,6 +608,13 @@ def update_template(template_id, **kwargs):
     )
     conn.commit()
     return True
+
+
+def get_fallback_template():
+    """获取标记为 fallback 的模板（TMDB 失败时使用）"""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM push_templates WHERE is_fallback=1 ORDER BY id LIMIT 1").fetchone()
+    return dict(row) if row else None
 
 
 def delete_template(template_id):

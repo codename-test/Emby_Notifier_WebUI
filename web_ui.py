@@ -62,8 +62,10 @@ def ports_page():
     ports = db.get_all_ports()
     wechat_configs = db.get_all_wechat_configs()
     from flask import render_template_string
-    templates = db.get_templates()
-    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs, templates=templates)
+    all_templates = db.get_templates()
+    template_names = {t["id"]: t["name"] for t in all_templates}
+    templates = [t for t in all_templates if not t.get("is_fallback")]
+    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs, templates=templates, template_names=template_names)
     html = BASE_TEMPLATE.replace("{title}", "端口管理") \
         .replace("{dashboard_active}", "") \
         .replace("{ports_active}", "active") \
@@ -569,6 +571,9 @@ def api_update_template(template_id):
 
 @app.route("/api/templates/<int:template_id>", methods=["DELETE"])
 def api_delete_template(template_id):
+    t = db.get_template(template_id)
+    if t and t.get("is_fallback"):
+        return jsonify({"error": "回退模板不可删除"}), 400
     db.delete_template(template_id)
     return jsonify({"status": "deleted"})
 
@@ -837,6 +842,7 @@ PORTS_CONTENT = """
                         <tr>
                             <th>组名</th>
                             <th>端口</th>
+                            <th>推送模板</th>
                             <th>企业微信配置</th>
                             <th>发送对象</th>
                             <th>状态</th>
@@ -848,6 +854,7 @@ PORTS_CONTENT = """
                         <tr data-port-id="{{ port.id }}">
                             <td>{{ port.server_name }}</td>
                             <td><code>{{ port.port }}</code></td>
+                            <td>{{ template_names.get(port.template_id, '标准') }}</td>
                             <td>
                                 {% if port.wechat_config_id %}
                                     {% for wc in wechat_configs %}
@@ -1596,16 +1603,27 @@ TEMPLATES_CONTENT = """
             </button>
         </div>
 
+        <div class="alert alert-info small mb-3">
+            <i class="bi bi-info-circle-fill"></i> 
+            <strong>回退模板</strong>：当 TMDB 获取媒体详情失败时（如未收录的影片），自动切换到标记为 <span class="badge bg-warning text-dark">回退</span> 的模板推送。回退模板不可删除、不可在端口下拉中选择、封面图强制关闭。
+        </div>
+
         <div class="row" id="templateCards">
             {% for t in templates %}
             <div class="col-md-6 mb-3">
-                <div class="card">
+                <div class="card{% if t.is_fallback %} border-warning{% endif %}">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start mb-2">
-                            <h5 class="card-title mb-0">{{ t.name }} {% if not t.get('enable_image', 1) %}<span class="badge bg-secondary ms-1">无图</span>{% endif %}</h5>
+                            <h5 class="card-title mb-0">
+                                {{ t.name }}
+                                {% if t.is_fallback %}<span class="badge bg-warning text-dark ms-1">回退</span>{% endif %}
+                                {% if not t.get('enable_image', 1) %}<span class="badge bg-secondary ms-1">无图</span>{% endif %}
+                            </h5>
                             <div>
                                 <button class="btn btn-icon btn-outline-primary btn-sm" onclick="openEditTemplate({{ t.id }})" title="\u7f16\u8f91"><i class="bi bi-pencil"></i></button>
+                                {% if not t.is_fallback %}
                                 <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteTemplate({{ t.id }})" title="\u5220\u9664"><i class="bi bi-trash"></i></button>
+                                {% endif %}
                             </div>
                         </div>
                         <p class="text-muted small mb-1"><strong>\u6807\u9898\uff1a</strong>{{ t.title }}</p>
