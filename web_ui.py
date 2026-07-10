@@ -60,6 +60,8 @@ def index():
 def ports_page():
     """端口管理页面"""
     ports = db.get_all_ports()
+    for p in ports:
+        p["channels"] = db.get_channels(p["id"])
     wechat_configs = db.get_all_wechat_configs()
     all_channels = db.get_all_channels()
     from flask import render_template_string

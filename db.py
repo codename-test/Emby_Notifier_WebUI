@@ -537,6 +537,21 @@ def get_all_channels():
     return [dict(row) for row in cursor.fetchall()]
 
 
+def get_channels(port_id):
+    """获取指定端口关联的通道列表"""
+    conn = _get_conn()
+    port = conn.execute("SELECT channel_ids FROM ports WHERE id = ?", (port_id,)).fetchone()
+    if not port or not port["channel_ids"]:
+        return []
+    import json
+    channel_ids = json.loads(port["channel_ids"])
+    if not channel_ids:
+        return []
+    placeholders = ",".join(["?"] * len(channel_ids))
+    cursor = conn.execute(f"SELECT * FROM channels WHERE id IN ({placeholders})", channel_ids)
+    return [dict(row) for row in cursor.fetchall()]
+
+
 def get_channel(channel_id):
     """获取单个通道配置"""
     conn = _get_conn()
