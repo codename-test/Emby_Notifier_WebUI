@@ -132,6 +132,26 @@ def init_db():
         conn.execute("ALTER TABLE ports ADD COLUMN channel_ids TEXT DEFAULT '[]'")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # 迁移：检测旧版 channels 表结构并重建
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(channels)").fetchall()]
+        if cols and 'name' not in cols:
+            # 旧版 schema，需要重建
+            log.logger.info("Detected old channels schema, rebuilding...")
+            conn.execute("DROP TABLE channels")
+            conn.execute("""
+                CREATE TABLE channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    config TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+    except Exception:
+        pass
+
     # 迁移：wechat_configs → channels
     wc_count = conn.execute("SELECT COUNT(*) FROM wechat_configs").fetchone()[0]
     ch_count = conn.execute("SELECT COUNT(*) FROM channels").fetchone()[0]

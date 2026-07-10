@@ -409,6 +409,21 @@ def api_delete_channel(channel_id):
     return jsonify({"status": "deleted"})
 
 
+@app.route("/api/channels/<int:channel_id>/duplicate", methods=["POST"])
+def api_duplicate_channel(channel_id):
+    """复制通道"""
+    ch = db.get_channel(channel_id)
+    if not ch:
+        return jsonify({"error": "Channel not found"}), 404
+    new_id = db.create_channel(
+        name=ch["name"] + " (副本)",
+        channel_type=ch["type"],
+        config=ch["config"],
+        enabled=0,  # 复制后默认禁用，避免重复推送
+    )
+    return jsonify({"id": new_id})
+
+
 @app.route("/api/channels/<int:channel_id>/test", methods=["POST"])
 def api_test_channel(channel_id):
     """测试通道连通性"""
@@ -1868,6 +1883,7 @@ CHANNELS_CONTENT = """
                             <td>
                                 <button class="btn btn-icon btn-outline-primary btn-sm" onclick="testChannel({{ ch.id }})" title="测试"><i class="bi bi-send"></i></button>
                                 <button class="btn btn-icon btn-outline-primary btn-sm" onclick="openEditChannel({{ ch.id }})" title="编辑"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-icon btn-outline-success btn-sm" onclick="duplicateChannel({{ ch.id }})" title="复制"><i class="bi bi-files"></i></button>
                                 <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteChannel({{ ch.id }})" title="删除"><i class="bi bi-trash"></i></button>
                             </td>
                         </tr>
@@ -2112,6 +2128,21 @@ CHANNELS_JS = """
                 location.reload();
             })
             .catch(err => showToast('删除失败：' + err, 'danger'));
+        }
+
+        function duplicateChannel(id) {
+            if (!confirm('确定复制此通道？')) return;
+            fetch(`/api/channels/${id}/duplicate`, {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showToast('复制失败：' + data.error, 'danger');
+                } else {
+                    showToast('已复制（默认禁用）');
+                    location.reload();
+                }
+            })
+            .catch(err => showToast('复制失败：' + err, 'danger'));
         }
         
         function testChannel(id) {
