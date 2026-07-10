@@ -241,7 +241,6 @@ def api_create_port():
     port_id = db.create_port(
         port_number=port_number,
         server_name=data.get("server_name", ""),
-        server_type=data.get("server_type", "Emby"),
         server_url=data.get("server_url", ""),
         wechat_config_id=data.get("wechat_config_id"),
         send_targets=data.get("send_targets", [])
@@ -801,7 +800,6 @@ INDEX_CONTENT = """
                         <tr>
                             <td><code>{{ port.port }}</code></td>
                             <td>{{ port.server_name }}</td>
-                            <td>{{ port.server_type }}</td>
                             <td>
                                 {% if port.enabled %}
                                 <span class="badge badge-running">运行中</span>
@@ -839,7 +837,6 @@ PORTS_CONTENT = """
                         <tr>
                             <th>组名</th>
                             <th>端口</th>
-                            <th>服务器类型</th>
                             <th>企业微信配置</th>
                             <th>发送对象</th>
                             <th>状态</th>
@@ -851,7 +848,6 @@ PORTS_CONTENT = """
                         <tr data-port-id="{{ port.id }}">
                             <td>{{ port.server_name }}</td>
                             <td><code>{{ port.port }}</code></td>
-                            <td>{{ port.server_type }}</td>
                             <td>
                                 {% if port.wechat_config_id %}
                                     {% for wc in wechat_configs %}
@@ -925,13 +921,6 @@ PORTS_CONTENT = """
                                 <input type="number" class="form-control" id="addPortNumber" required placeholder="例如：8001">
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">服务器类型</label>
-                                <select class="form-select" id="addPortType">
-                                    <option value="Emby">Emby</option>
-                                    <option value="Jellyfin">Jellyfin</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
                                 <label class="form-label">企业微信配置组</label>
                                 <select class="form-select" id="addPortWechatConfig">
                                     <option value="">请选择...</option>
@@ -970,7 +959,6 @@ PORTS_JS = """
         async function savePort() {
             const name = document.getElementById('addPortName').value.trim();
             const port = parseInt(document.getElementById('addPortNumber').value);
-            const type = document.getElementById('addPortType').value;
             const wechatConfigId = document.getElementById('addPortWechatConfig').value;
             const targetsText = document.getElementById('addPortTargets').value.trim();
             
@@ -984,7 +972,6 @@ PORTS_JS = """
             const data = {
                 port: port,
                 server_name: name,
-                server_type: type,
                 wechat_config_id: wechatConfigId ? parseInt(wechatConfigId) : null,
                 template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
                 send_targets: targets,
@@ -1009,7 +996,6 @@ PORTS_JS = """
             document.querySelector('#addPortModal .modal-title').textContent = '编辑端口';
             document.getElementById('addPortName').value = port.server_name || '';
             document.getElementById('addPortNumber').value = port.port || '';
-            document.getElementById('addPortType').value = port.server_type || 'Emby';
             document.getElementById('addPortWechatConfig').value = port.wechat_config_id || '';
             document.getElementById('addPortTemplate').value = port.template_id || '1';
             const targets = port.send_targets;
@@ -1021,7 +1007,6 @@ PORTS_JS = """
                 const data = {
                     port: parseInt(document.getElementById('addPortNumber').value),
                     server_name: document.getElementById('addPortName').value.trim(),
-                    server_type: document.getElementById('addPortType').value,
                     wechat_config_id: document.getElementById('addPortWechatConfig').value ? parseInt(document.getElementById('addPortWechatConfig').value) : null,
                     template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
                     send_targets: document.getElementById('addPortTargets').value.trim() ? document.getElementById('addPortTargets').value.trim().split(String.fromCharCode(10)).map(t => t.trim()).filter(t => t) : [],

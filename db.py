@@ -212,7 +212,7 @@ def create_port(port_number, server_name, server_type="Emby", server_url="", wec
 
 def update_port(port_id, **kwargs):
     conn = _get_conn()
-    allowed = {"port", "server_name", "server_type", "server_url", "wechat_config_id", "send_targets", "enabled", "template_id"}
+    allowed = {"port", "server_name", "server_url", "wechat_config_id", "send_targets", "enabled", "template_id"}
     fields = {}
     for k, v in kwargs.items():
         if k in allowed and v is not None:

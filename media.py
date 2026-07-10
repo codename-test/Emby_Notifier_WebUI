@@ -244,14 +244,35 @@ class Episode(IMedia):
 
 
 def jellyfin_msg_preprocess(msg):
-    """将 Jellyfin 消息格式统一为 Emby 格式"""
+    """将 Jellyfin/Emby 消息格式统一为内部 Emby 格式
+
+    支持三种格式：
+    1. Jellyfin webhook: {NotificationType, ItemType, Name, Provider_*, ...}
+    2. Emby webhook:     {Event, Item: {Type, Name, ProviderIds, ...}, Server: {...}}
+    3. 已有 Emby 包装:   {Event, Emby: {Type, Name, ...}}
+    """
     data = json.loads(msg)
-    # Jellyfin webhook flat format: {NotificationType, Name, ItemType, ...}
+
+    # --- Step 1: Normalize Event field ---
     if "NotificationType" in data and "Event" not in data:
         nt = data.get("NotificationType", "")
         if nt in ("ItemAdded",):
             data["Event"] = "library.new"
-        # Map ItemType -> Type (used by create_media)
+
+    # --- Step 2: Extract media fields ---
+    # Emby webhook: Item contains the media object
+    if "Item" in data and "Emby" not in data:
+        data["Emby"] = data.pop("Item")
+    # Legacy Jellyfin wrapper: {Jellyfin: {...}}
+    elif "Emby" not in data and "Jellyfin" in data:
+        data["Emby"] = data.pop("Jellyfin")
+    # Already has Emby key (e.g. Emby server direct format)
+    elif "Emby" in data:
+        pass  # Already correct structure
+
+    # --- Step 3: Common field mapping for Jellyfin flat format ---
+    # (applies when fields are at top level, not yet wrapped)
+    if "Emby" not in data:
         if "ItemType" in data and "Type" not in data:
             data["Type"] = data.pop("ItemType")
         # Convert flat Provider_* fields to ProviderIds dict
@@ -262,17 +283,18 @@ def jellyfin_msg_preprocess(msg):
                 provider_ids[provider_name.capitalize()] = data.pop(k)
         if provider_ids:
             data["ProviderIds"] = provider_ids
-        # Wrap in Emby key
+
+    # --- Step 4: Wrap remaining top-level fields into Emby if not done ---
+    if "Emby" not in data:
         emby_fields = {}
         for k, v in list(data.items()):
             if k not in ("Event",):
                 emby_fields[k] = data.pop(k)
         data["Emby"] = emby_fields
-    # Legacy Jellyfin wrapper: {Jellyfin: {...}} -> {Emby: {...}}
-    elif "Emby" not in data and "Jellyfin" in data:
-        data["Emby"] = data.pop("Jellyfin")
+
     if "ServerType" not in data.get("Emby", {}):
         data.setdefault("Emby", {})["ServerType"] = "Jellyfin"
+
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -310,7 +332,7 @@ def process_media(msg, port_id):
     event = data.get("Event", "")
 
     if event != "library.new":
-        log.logger.info(f"Event '{event}' is not 'library.new', skipping.")
+        log.logger.debug(f"Event '{event}' is not 'library.new', skipping.")
         return
 
     # 检查端口配置
@@ -324,7 +346,7 @@ def process_media(msg, port_id):
         emby_data["ServerName"] = port_config["server_name"]
     if port_config.get("server_url"):
         emby_data["ServerURL"] = port_config["server_url"]
-    emby_data["ServerType"] = port_config.get("server_type", "Emby")
+    emby_data["ServerType"] = "Emby"
 
     # 检查 DND
     dnd = db.get_dnd_settings()
