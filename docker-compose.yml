@@ -1,25 +1,12 @@
 version: '3'
 services:
   emby_notifier:
-    # Docker Hub 镜像（推荐）
     image: codenametest/emby_notifier_webui:latest
-    # 或使用 GitHub ghcr.io 镜像：
-    # image: ghcr.io/codename-test/emby_notifier_webui:latest
-    # 如需本地构建：
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
     container_name: emby_notifier
     environment:
       - TZ=Asia/Shanghai
       - WEB_PORT=5000
       - DB_PATH=/data/emby_notifier.db
-      # 可选参数
-      - TVDB_API_KEY=
-      - TMDB_IMAGE_DOMAIN=https://image.tmdb.org
-      - LOG_LEVEL=INFO
-      - LOG_EXPORT=False
-      - LOG_PATH=/var/tmp/emby_notifier/
     volumes:
       - emby_data:/data
     network_mode: "host"

@@ -36,20 +36,6 @@ else:
 logger.setLevel(level)
 console_handler.setLevel(level)
 
-# 输出到文件
-log_export = os.getenv('LOG_EXPORT', 'False')
-if log_export.lower() == 'true':
-    path = os.getenv('LOG_PATH', '/var/tmp/emby_notifier_tg/')
-    os.makedirs(path, exist_ok=True)
-    fileName = datetime.datetime.now().strftime('%Y-%m-%d') + '.log'
-    file_handler = logging.FileHandler(filename=os.path.join(path, fileName), mode='a', encoding='utf8')
-    file_handler.setLevel(level)
-    file_formatter = logging.Formatter(
-        fmt='[%(asctime)s] [%(filename)s|%(funcName)s|%(lineno)d] [%(levelname)s] : %(message)s',
-        datefmt='%Y-%m-%d  %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
-
 
 class DBHandler(logging.Handler):
     """将日志写入 SQLite 数据库"""
@@ -75,8 +61,6 @@ console_handler.setFormatter(console_formatter)
 
 '''添加处理器'''
 logger.addHandler(console_handler)
-if log_export.lower() == 'true':
-    logger.addHandler(file_handler)
 
 
 def setup_db_logging(port_id=None):

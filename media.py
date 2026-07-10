@@ -64,10 +64,10 @@ class IMedia(abc.ABC):
         # If TMDB ID already known from ProviderIds, skip search
         existing_tmdb = self.info_["ProviderIds"].get("Tmdb", "")
         if existing_tmdb and existing_tmdb != "-1":
-            log.logger.info(f"TMDB ID already known: {existing_tmdb}")
+            log.logger.debug(f"TMDB ID already known: {existing_tmdb}")
             return
 
-        log.logger.info(f"Searching TMDB: {self.info_['Name']} ({self.info_['PremiereYear']})")
+        log.logger.debug(f"Searching TMDB: {self.info_['Name']} ({self.info_['PremiereYear']})")
         medias, err = tmdb_api.search_media(
             self.info_["Type"], self.info_["Name"], self.info_["PremiereYear"]
         )
@@ -83,7 +83,7 @@ class IMedia(abc.ABC):
                 continue
             if Tvdb_id == str(ext_ids.get("tvdb_id")):
                 self.info_["ProviderIds"]["Tmdb"] = str(m["id"])
-                log.logger.info(f"TMDB ID matched via TVDB: {m['id']}")
+                log.logger.debug(f"TMDB ID matched via TVDB: {m['id']}")
                 return
 
         # Fallback: use first result
@@ -96,7 +96,7 @@ class IMedia(abc.ABC):
             # Name search failed, try direct lookup by TVDB ID
             Tvdb_id = self.info_["ProviderIds"].get("Tvdb", "")
             if Tvdb_id and Tvdb_id != "-1":
-                log.logger.info(f"Name search failed, trying TVDB ID: {Tvdb_id}")
+                log.logger.debug(f"Name search failed, trying TVDB ID: {Tvdb_id}")
                 tmdb_id, err = tmdb_api.find_by_tvdb_id(Tvdb_id)
                 if tmdb_id:
                     self.info_["ProviderIds"]["Tmdb"] = str(tmdb_id)
@@ -197,7 +197,7 @@ class Episode(IMedia):
             tmdb_id, self.info_["Season"], self.info_["Episode"]
         )
         if err:
-            log.logger.warning(f"Failed to get episode details: {err}, using show info")
+            log.logger.warning(f"Failed to get episode details, using fallback: {err}, using show info")
             ep_details = {}
 
         self.media_detail_["media_name"] = tv_details.get("name", self.info_["Name"])
@@ -326,7 +326,7 @@ def process_media(msg, port_id):
     data = json.loads(msg)
 
     if "Emby" not in data:
-        log.logger.warning("No 'Emby' field in message, skipping.")
+        log.logger.debug("No 'Emby' field in message, skipping.")
         return
 
     emby_data = data["Emby"]
@@ -367,12 +367,12 @@ def _fetch_and_send(emby_data, port_id):
     media_type = emby_data.get("Type", "")
     media_obj = create_media(media_type)
     if media_obj is None:
-        log.logger.warning(f"Unsupported media type: {media_type}")
+        log.logger.error(f"Unsupported media type: {media_type}")
         return
 
     media_obj.port_id_ = port_id
     media_obj.parse_info(emby_data)
-    log.logger.info(f"[Port {port_id}] Processing: {media_obj}")
+    log.logger.debug(f"[Port {port_id}] Processing: {media_obj}")
 
     # 检查端口使用的模板是否无图，无图模板不需要 TMDB
     port_config = db.get_port(port_id)
@@ -380,7 +380,7 @@ def _fetch_and_send(emby_data, port_id):
     skip_tmdb = template and not template.get("enable_image", 1)
 
     if skip_tmdb:
-        log.logger.info(f"[Port {port_id}] No-image template '{template['name']}', skipping TMDB fetch")
+        log.logger.debug(f"[Port {port_id}] No-image template '{template['name']}', skipping TMDB fetch")
         media_obj.media_detail_["tmdb_failed"] = True
         media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
         media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
@@ -401,18 +401,19 @@ def _fetch_and_send(emby_data, port_id):
             # fall through to push
 
     # 创建 Sender 并推送
-    enabled_channels = db.get_enabled_channels(port_id)
-    if not enabled_channels:
-        log.logger.warning(f"[Port {port_id}] No enabled channels, skipping push.")
+    port_config = db.get_port(port_id)
+    channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
+    if not channel_ids:
+        log.logger.error(f"[Port {port_id}] No channels configured, skipping push.")
         return
 
     sender = PortSender(
         port_id,
         port_config.get("server_name", ""),
-        enabled_channels,
+        channel_ids,
     )
     sender.send_media_details(media_obj.media_detail_)
-    log.logger.info(f"[Port {port_id}] Media details sent successfully.")
+    log.logger.debug(f"[Port {port_id}] Media details sent successfully.")
 
 
 def flush_queue_for_port(port_id):
@@ -421,16 +422,16 @@ def flush_queue_for_port(port_id):
     if not messages:
         return 0
 
-    enabled_channels = db.get_enabled_channels(port_id)
-    if not enabled_channels:
-        log.logger.warning(f"[Port {port_id}] No enabled channels for queue flush.")
+    port_config = db.get_port(port_id)
+    channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
+    if not channel_ids:
+        log.logger.error(f"[Port {port_id}] No channels configured for queue flush.")
         return 0
 
-    port_config = db.get_port(port_id)
     sender = PortSender(
         port_id,
         port_config.get("server_name", ""),
-        enabled_channels,
+        channel_ids,
     )
 
     sent_count = 0
@@ -448,7 +449,7 @@ def flush_queue_for_port(port_id):
             sender.send_media_details(media_obj.media_detail_)
             db.update_message_status(msg["id"], "sent")
             sent_count += 1
-            log.logger.info(f"[Port {port_id}] Queue message #{msg['id']} sent.")
+            log.logger.debug(f"[Port {port_id}] Queue message #{msg['id']} sent.")
         except Exception as e:
             db.update_message_status(msg["id"], "failed", str(e))
             log.logger.error(
@@ -485,9 +486,9 @@ def send_test_notification(port_id):
     if not port_config:
         raise Exception(f"Port {port_id} not found")
 
-    enabled_channels = db.get_enabled_channels(port_id)
-    if not enabled_channels:
-        raise Exception("No enabled channels")
+    channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
+    if not channel_ids:
+        raise Exception("No channels configured")
 
     # 构造电影格式的测试数据
     test_movie = {
@@ -526,7 +527,7 @@ def send_test_notification(port_id):
     sender = PortSender(
         port_id,
         port_config.get("server_name", ""),
-        enabled_channels,
+        channel_ids,
     )
 
     results = {}

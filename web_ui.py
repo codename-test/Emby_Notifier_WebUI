@@ -48,7 +48,7 @@ def index():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -61,18 +61,19 @@ def ports_page():
     """端口管理页面"""
     ports = db.get_all_ports()
     wechat_configs = db.get_all_wechat_configs()
+    all_channels = db.get_all_channels()
     from flask import render_template_string
     all_templates = db.get_templates()
     template_names = {t["id"]: t["name"] for t in all_templates}
     templates = [t for t in all_templates if not t.get("is_fallback")]
-    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs, templates=templates, template_names=template_names)
+    content_rendered = render_template_string(PORTS_CONTENT, ports=ports, wechat_configs=wechat_configs, templates=templates, template_names=template_names, all_channels=all_channels)
     html = BASE_TEMPLATE.replace("{title}", "端口管理") \
         .replace("{dashboard_active}", "") \
         .replace("{ports_active}", "active") \
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -92,7 +93,7 @@ def dnd_page():
         .replace("{dnd_active}", "active") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -111,7 +112,7 @@ def queue_page():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "active") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -133,12 +134,34 @@ def wechat_page():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "active") \
+        .replace("{channels_active}", "active") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
         .replace("{extra_js}", WECHAT_JS.replace("{{ wechat_configs_json|safe }}", wechat_configs_json))
     return html
+@app.route("/channels")
+def channels_page():
+    """通道管理页面"""
+    channels = db.get_all_channels()
+    from flask import render_template_string
+    import json as _json
+    channels_json = _json.dumps(channels, default=str)
+    content_rendered = render_template_string(CHANNELS_CONTENT, channels=channels, channels_json=channels_json)
+    html = BASE_TEMPLATE.replace("{title}", "推送通道") \
+        .replace("{dashboard_active}", "") \
+        .replace("{ports_active}", "") \
+        .replace("{dnd_active}", "") \
+        .replace("{queue_active}", "") \
+        .replace("{logs_active}", "") \
+        .replace("{channels_active}", "") \
+        .replace("{channels_active}", "active") \
+        .replace("{templates_active}", "") \
+        .replace("{settings_active}", "") \
+        .replace("{content}", content_rendered) \
+        .replace("{extra_js}", CHANNELS_JS.replace("{{ channels_json|safe }}", channels_json))
+    return html
+
 @app.route("/logs")
 def logs_page():
     """系统日志页面"""
@@ -150,7 +173,7 @@ def logs_page():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "active") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -168,7 +191,7 @@ def templates_page():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "active") \
         .replace("{settings_active}", "") \
         .replace("{content}", content_rendered) \
@@ -202,7 +225,7 @@ def settings():
         .replace("{dnd_active}", "") \
         .replace("{queue_active}", "") \
         .replace("{logs_active}", "") \
-        .replace("{wechat_active}", "") \
+        .replace("{channels_active}", "") \
         .replace("{templates_active}", "") \
         .replace("{settings_active}", "active") \
         .replace("{content}", content_rendered) \
@@ -221,12 +244,6 @@ def api_get_ports():
     for p in ports:
         p["channels"] = db.get_channels(p["id"])
         p["running"] = port_manager.is_running(p["id"]) if port_manager else False
-        # 解析 send_targets
-        if isinstance(p.get("send_targets"), str):
-            try:
-                p["send_targets"] = json.loads(p["send_targets"])
-            except:
-                p["send_targets"] = []
     return jsonify(ports)
 
 
@@ -244,8 +261,8 @@ def api_create_port():
         port_number=port_number,
         server_name=data.get("server_name", ""),
         server_url=data.get("server_url", ""),
-        wechat_config_id=data.get("wechat_config_id"),
-        send_targets=data.get("send_targets", [])
+        template_id=data.get("template_id", 1),
+        channel_ids=data.get("channel_ids", []),
     )
     if port_id is None:
         return jsonify({"error": "端口号已存在"}), 400
@@ -351,31 +368,68 @@ def api_delete_wechat_config(config_id):
 
 
 # ──────────────────────────────────────────────
-#  Channel API
+#  Channel API (多通道管理)
 # ──────────────────────────────────────────────
 
 
-@app.route("/api/ports/<int:port_id>/channels", methods=["GET"])
-def api_get_channels(port_id):
-    channels = db.get_channels(port_id)
+@app.route("/api/channels", methods=["GET"])
+def api_get_all_channels():
+    channels = db.get_all_channels()
     return jsonify(channels)
 
 
-@app.route("/api/ports/<int:port_id>/channels/<channel_type>", methods=["PUT"])
-def api_save_channel(port_id, channel_type):
+@app.route("/api/channels", methods=["POST"])
+def api_create_channel():
     data = request.json
-    db.save_channel(port_id, channel_type, data.get("config", {}), data.get("enabled", False))
-    return jsonify({"status": "saved"})
+    channel_id = db.create_channel(
+        name=data.get("name", ""),
+        channel_type=data.get("type", ""),
+        config=json.dumps(data.get("config", {})),
+        enabled=data.get("enabled", 1),
+    )
+    return jsonify({"id": channel_id})
 
 
-@app.route("/api/ports/<int:port_id>/channels/<channel_type>/toggle", methods=["POST"])
-def api_toggle_channel(port_id, channel_type):
-    ch = db.get_channel(port_id, channel_type)
+@app.route("/api/channels/<int:channel_id>", methods=["PUT"])
+def api_update_channel(channel_id):
+    data = request.json
+    db.update_channel(
+        channel_id,
+        name=data.get("name"),
+        channel_type=data.get("type"),
+        config=json.dumps(data["config"]) if "config" in data else None,
+        enabled=data.get("enabled"),
+    )
+    return jsonify({"status": "updated"})
+
+
+@app.route("/api/channels/<int:channel_id>", methods=["DELETE"])
+def api_delete_channel(channel_id):
+    db.delete_channel(channel_id)
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/channels/<int:channel_id>/test", methods=["POST"])
+def api_test_channel(channel_id):
+    """测试通道连通性"""
+    ch = db.get_channel(channel_id)
     if not ch:
         return jsonify({"error": "Channel not found"}), 404
-    new_enabled = 0 if ch["enabled"] else 1
-    db.toggle_channel(port_id, channel_type, new_enabled)
-    return jsonify({"enabled": new_enabled})
+    
+    try:
+        config = json.loads(ch["config"]) if isinstance(ch["config"], str) else ch["config"]
+        from channels import create_channel
+        channel = create_channel(ch["type"], config)
+        ok = channel.test()
+        if ok:
+            log.logger.debug(f"Channel test successful: {ch['name']} ({ch['type']})")
+            return jsonify({"success": True, "message": "测试成功"})
+        else:
+            log.logger.error(f"Channel test failed: {ch['name']} ({ch['type']})")
+            return jsonify({"success": False, "message": "测试失败，请检查配置"})
+    except Exception as e:
+        log.logger.error(f"Channel test error: {ch['name']} - {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # ──────────────────────────────────────────────
@@ -453,9 +507,9 @@ def api_test_push(port_id):
     if not port:
         return jsonify({"error": "Port not found"}), 404
     
-    channels = db.get_enabled_channels(port_id)
-    if not channels:
-        return jsonify({"error": "没有启用的推送渠道"}), 400
+    channel_ids = json.loads(port.get("channel_ids", "[]")) if port else []
+    if not channel_ids:
+        return jsonify({"error": "没有配置推送通道"}), 400
     
     try:
         results = media.send_test_notification(port_id)
@@ -566,6 +620,10 @@ def api_create_template():
 @app.route("/api/templates/<int:template_id>", methods=["PUT"])
 def api_update_template(template_id):
     data = request.json
+    t = db.get_template(template_id)
+    # 回退模板强制关闭图片
+    if t and t.get("is_fallback"):
+        data["enable_image"] = 0
     db.update_template(template_id, **data)
     return jsonify({"status": "updated"})
 
@@ -672,7 +730,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
             <a class="nav-link {dnd_active}" href="/dnd"><i class="bi bi-moon-fill"></i> 勿扰设置</a>
             <a class="nav-link {queue_active}" href="/queue"><i class="bi bi-inbox"></i> 消息队列</a>
             <a class="nav-link {logs_active}" href="/logs"><i class="bi bi-list-ul"></i> 系统日志</a>
-            <a class="nav-link {wechat_active}" href="/wechat"><i class="bi bi-wechat"></i> 企业微信</a>
+            <a class="nav-link {channels_active}" href="/channels"><i class="bi bi-broadcast"></i> 推送通道</a>
             <a class="nav-link {templates_active}" href="/templates"><i class="bi bi-file-earmark-text"></i> 推送模板</a>
             <a class="nav-link {settings_active}" href="/settings"><i class="bi bi-gear-fill"></i> 系统设置</a>
         </div>
@@ -843,8 +901,7 @@ PORTS_CONTENT = """
                             <th>组名</th>
                             <th>端口</th>
                             <th>推送模板</th>
-                            <th>企业微信配置</th>
-                            <th>发送对象</th>
+                            <th>推送通道</th>
                             <th>状态</th>
                             <th>操作</th>
                         </tr>
@@ -856,27 +913,10 @@ PORTS_CONTENT = """
                             <td><code>{{ port.port }}</code></td>
                             <td>{{ template_names.get(port.template_id, '标准') }}</td>
                             <td>
-                                {% if port.wechat_config_id %}
-                                    {% for wc in wechat_configs %}
-                                        {% if wc.id == port.wechat_config_id %}
-                                            {{ wc.name }}
-                                        {% endif %}
+                                {% if port.channels %}
+                                    {% for ch in port.channels %}
+                                        <span class="badge bg-{% if ch.type == 'wechat_work_api' %}primary{% elif ch.type == 'wechat_work_bot' %}success{% elif ch.type == 'dingtalk' %}info{% elif ch.type == 'feishu' %}warning text-dark{% elif ch.type == 'telegram_bot' %}secondary{% elif ch.type == 'bark' %}dark{% else %}secondary{% endif %} me-1">{{ ch.name }}</span>
                                     {% endfor %}
-                                {% else %}
-                                    <span class="text-muted">未配置</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% set targets = [] %}
-                                {% if port.send_targets %}
-                                    {% if port.send_targets is string %}
-                                        {% set targets = port.send_targets | fromjson %}
-                                    {% else %}
-                                        {% set targets = port.send_targets %}
-                                    {% endif %}
-                                {% endif %}
-                                {% if targets %}
-                                    {{ targets | join(', ') }}
                                 {% else %}
                                     <span class="text-muted">未配置</span>
                                 {% endif %}
@@ -928,19 +968,31 @@ PORTS_CONTENT = """
                                 <input type="number" class="form-control" id="addPortNumber" required placeholder="例如：8001">
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">企业微信配置组</label>
-                                <select class="form-select" id="addPortWechatConfig">
-                                    <option value="">请选择...</option>
-                                    {% for wc in wechat_configs %}
-                                    <option value="{{ wc.id }}">{{ wc.name }}</option>
+                                <label class="form-label">推送通道</label>
+                                <div id="portChannelList" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                                    {% for ch in all_channels %}
+                                    <div class="form-check">
+                                        <input class="form-check-input port-channel-check" type="checkbox" value="{{ ch.id }}" id="portCh{{ ch.id }}">
+                                        <label class="form-check-label" for="portCh{{ ch.id }}">
+                                            {{ ch.name }}
+                                            {% if ch.type == 'wechat_work_api' %}
+                                                <span class="badge bg-primary">企微应用</span>
+                                            {% elif ch.type == 'wechat_work_bot' %}
+                                                <span class="badge bg-success">企微机器人</span>
+                                            {% elif ch.type == 'dingtalk' %}
+                                                <span class="badge bg-info">钉钉</span>
+                                            {% elif ch.type == 'feishu' %}
+                                                <span class="badge bg-warning text-dark">飞书</span>
+                                            {% elif ch.type == 'telegram_bot' %}
+                                                <span class="badge bg-secondary">Telegram</span>
+                                            {% elif ch.type == 'bark' %}
+                                                <span class="badge bg-dark">Bark</span>
+                                            {% endif %}
+                                        </label>
+                                    </div>
                                     {% endfor %}
-                                </select>
-                                <div class="form-text">需要先在"企业微信"页面创建配置组</div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">发送对象</label>
-                                <textarea class="form-control" id="addPortTargets" rows="3" placeholder="用户ID或组ID，每行一个&#10;例如：&#10;@all&#10;zhangsan&#10;group123"></textarea>
-                                <div class="form-text">支持用户ID和组ID，每行一个。"@all" 表示发送给所有人</div>
+                                </div>
+                                <div class="form-text">可多选，同时推送到多个通道</div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">推送模板</label>
@@ -966,22 +1018,20 @@ PORTS_JS = """
         async function savePort() {
             const name = document.getElementById('addPortName').value.trim();
             const port = parseInt(document.getElementById('addPortNumber').value);
-            const wechatConfigId = document.getElementById('addPortWechatConfig').value;
-            const targetsText = document.getElementById('addPortTargets').value.trim();
             
             if (!name || !port) {
                 showToast('请填写组名和端口号', 'danger');
                 return;
             }
             
-            const targets = targetsText ? targetsText.split(String.fromCharCode(10)).map(t => t.trim()).filter(t => t) : [];
+            // 获取选中的通道 IDs
+            const channelIds = Array.from(document.querySelectorAll('.port-channel-check:checked')).map(cb => parseInt(cb.value));
             
             const data = {
                 port: port,
                 server_name: name,
-                wechat_config_id: wechatConfigId ? parseInt(wechatConfigId) : null,
+                channel_ids: channelIds,
                 template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
-                send_targets: targets,
                 enabled: true
             };
             
@@ -1003,20 +1053,22 @@ PORTS_JS = """
             document.querySelector('#addPortModal .modal-title').textContent = '编辑端口';
             document.getElementById('addPortName').value = port.server_name || '';
             document.getElementById('addPortNumber').value = port.port || '';
-            document.getElementById('addPortWechatConfig').value = port.wechat_config_id || '';
+            // 设置通道选中状态
+            const portChannelIds = port.channel_ids ? (typeof port.channel_ids === 'string' ? JSON.parse(port.channel_ids) : port.channel_ids) : [];
+            document.querySelectorAll('.port-channel-check').forEach(cb => {
+                cb.checked = portChannelIds.includes(parseInt(cb.value));
+            });
             document.getElementById('addPortTemplate').value = port.template_id || '1';
-            const targets = port.send_targets;
-            document.getElementById('addPortTargets').value = Array.isArray(targets) ? targets.join(String.fromCharCode(10)) : (targets || '');
             
             // Change save button behavior to update instead of create
             const saveBtn = document.querySelector('#addPortModal .btn-primary');
             saveBtn.onclick = async function() {
+                const channelIds = Array.from(document.querySelectorAll('.port-channel-check:checked')).map(cb => parseInt(cb.value));
                 const data = {
                     port: parseInt(document.getElementById('addPortNumber').value),
                     server_name: document.getElementById('addPortName').value.trim(),
-                    wechat_config_id: document.getElementById('addPortWechatConfig').value ? parseInt(document.getElementById('addPortWechatConfig').value) : null,
+                    channel_ids: channelIds,
                     template_id: parseInt(document.getElementById('addPortTemplate').value) || 1,
-                    send_targets: document.getElementById('addPortTargets').value.trim() ? document.getElementById('addPortTargets').value.trim().split(String.fromCharCode(10)).map(t => t.trim()).filter(t => t) : [],
                 };
                 if (!data.server_name || !data.port) { showToast('请填写组名和端口号', 'danger'); return; }
                 const res = await apiPut('/api/ports/' + portId, data);
@@ -1433,8 +1485,8 @@ SETTINGS_CONTENT = """
                 <h6>快速开始</h6>
                 <ol>
                     <li>填写 TMDB API Token（必填）</li>
-                    <li>在"企业微信"页面添加企业微信配置组</li>
-                    <li>在"端口管理"中添加端口，选择企业微信配置组和发送对象</li>
+                    <li>在"推送通道"页面添加推送通道（企微、钉钉、飞书等）</li>
+                    <li>在"端口管理"中添加端口，选择推送通道</li>
                     <li>在 Emby/Jellyfin 控制台中配置 Webhook 地址</li>
                 </ol>
                 
@@ -1713,6 +1765,7 @@ TEMPLATES_JS = """
             document.getElementById('editPicMovie').value = 'media_backdrop';
             document.getElementById('editPicEpisode').value = 'media_still';
             document.getElementById('editEnableImage').checked = true;
+            document.getElementById('editEnableImage').disabled = false;
             new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
         }
 
@@ -1728,6 +1781,8 @@ TEMPLATES_JS = """
             document.getElementById('editPicMovie').value = t.picurl_movie || 'media_backdrop';
             document.getElementById('editPicEpisode').value = t.picurl_episode || 'media_still';
             document.getElementById('editEnableImage').checked = t.enable_image !== 0;
+            // 回退模板禁用图片
+            document.getElementById('editEnableImage').disabled = !!t.is_fallback;
             new bootstrap.Modal(document.getElementById('editTemplateModal')).show();
         }
 
@@ -1759,3 +1814,321 @@ TEMPLATES_JS = """
         }
     </script>
 """
+CHANNELS_CONTENT = """
+        <div class="page-header d-flex justify-content-between align-items-center">
+            <h2><i class="bi bi-broadcast"></i> 推送通道</h2>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addChannelModal" onclick="resetChannelModal()">
+                <i class="bi bi-plus-lg"></i> 添加通道
+            </button>
+        </div>
+
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i> 配置推送通道，端口可关联多个通道同时推送。支持企业微信应用/机器人、钉钉、飞书。
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>类型</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="channelsTable">
+                        {% for ch in channels %}
+                        <tr data-channel-id="{{ ch.id }}">
+                            <td>{{ ch.name }}</td>
+                            <td>
+                                {% if ch.type == 'wechat_work_api' %}
+                                    <span class="badge bg-primary">企业微信应用</span>
+                                {% elif ch.type == 'wechat_work_bot' %}
+                                    <span class="badge bg-success">企业微信机器人</span>
+                                {% elif ch.type == 'dingtalk' %}
+                                    <span class="badge bg-info">钉钉</span>
+                                {% elif ch.type == 'feishu' %}
+                                    <span class="badge bg-warning text-dark">飞书</span>
+                                {% elif ch.type == 'telegram_bot' %}
+                                    <span class="badge bg-secondary">Telegram</span>
+                                {% elif ch.type == 'bark' %}
+                                    <span class="badge bg-dark">Bark</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ ch.type }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if ch.enabled %}
+                                    <span class="badge bg-success">启用</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">禁用</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-icon btn-outline-primary btn-sm" onclick="testChannel({{ ch.id }})" title="测试"><i class="bi bi-send"></i></button>
+                                <button class="btn btn-icon btn-outline-primary btn-sm" onclick="openEditChannel({{ ch.id }})" title="编辑"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-icon btn-outline-danger btn-sm" onclick="deleteChannel({{ ch.id }})" title="删除"><i class="bi bi-trash"></i></button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 添加/编辑通道弹窗 -->
+        <div class="modal fade" id="addChannelModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="addChannelModalTitle">添加通道</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="addChannelForm" onsubmit="return false">
+                            <input type="hidden" id="editChannelId">
+                            <div class="mb-3">
+                                <label class="form-label">通道名称</label>
+                                <input type="text" class="form-control" id="editChannelName" placeholder="例如：我的通知通道" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">通道类型</label>
+                                <select class="form-select" id="editChannelType" onchange="onChannelTypeChange()">
+                                    <option value="wechat_work_api">企业微信应用</option>
+                                    <option value="wechat_work_bot">企业微信机器人</option>
+                                    <option value="dingtalk">钉钉</option>
+                                    <option value="feishu">飞书</option>
+                                    <option value="telegram_bot">Telegram</option>
+                                    <option value="bark">Bark (iOS)</option>
+                                </select>
+                            </div>
+                            
+                            <!-- 企业微信应用配置 -->
+                            <div id="config_wechat_work_api" class="channel-config">
+                                <div class="mb-3">
+                                    <label class="form-label">Corp ID</label>
+                                    <input type="text" class="form-control" id="cfg_corp_id" placeholder="企业 ID">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Corp Secret</label>
+                                    <input type="password" class="form-control" id="cfg_corp_secret" placeholder="应用 Secret">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Agent ID</label>
+                                    <input type="text" class="form-control" id="cfg_agent_id" placeholder="应用 Agent ID">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">接收人</label>
+                                    <textarea class="form-control" id="cfg_user_id" rows="3" placeholder="每行一个用户 ID&#10;例如：&#10;@all&#10;zhangsan&#10;lisi"></textarea>
+                                    <div class="form-text">"@all" 表示所有人，多个用户每行一个</div>
+                                </div>
+                            </div>
+                            
+                            <!-- 企业微信机器人配置 -->
+                            <div id="config_wechat_work_bot" class="channel-config" style="display:none">
+                                <div class="mb-3">
+                                    <label class="form-label">Webhook URL</label>
+                                    <input type="text" class="form-control" id="cfg_wwb_webhook_url" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+                                </div>
+                            </div>
+                            
+                            <!-- 钉钉配置 -->
+                            <div id="config_dingtalk" class="channel-config" style="display:none">
+                                <div class="mb-3">
+                                    <label class="form-label">Webhook URL</label>
+                                    <input type="text" class="form-control" id="cfg_dingtalk_webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">加签密钥（可选）</label>
+                                    <input type="password" class="form-control" id="cfg_dingtalk_secret" placeholder="SEC...">
+                                </div>
+                            </div>
+                            
+                            <!-- 飞书配置 -->
+                            <div id="config_feishu" class="channel-config" style="display:none">
+                                <div class="mb-3">
+                                    <label class="form-label">Webhook URL</label>
+                                    <input type="text" class="form-control" id="cfg_feishu_webhook_url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/...">
+                                </div>
+                            </div>
+                            
+                            <!-- Telegram Bot 配置 -->
+                            <div id="config_telegram_bot" class="channel-config" style="display:none">
+                                <div class="mb-3">
+                                    <label class="form-label">Bot Token</label>
+                                    <input type="password" class="form-control" id="cfg_bot_token" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Chat ID</label>
+                                    <input type="text" class="form-control" id="cfg_chat_id" placeholder="用户 ID 或群组 ID（如 @channelname）">
+                                </div>
+                            </div>
+                            
+                            <!-- Bark 配置 -->
+                            <div id="config_bark" class="channel-config" style="display:none">
+                                <div class="mb-3">
+                                    <label class="form-label">服务器地址（可选）</label>
+                                    <input type="text" class="form-control" id="cfg_server_url" placeholder="https://api.day.app" value="https://api.day.app">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Device Key</label>
+                                    <input type="text" class="form-control" id="cfg_device_key" placeholder="你的设备密钥">
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="editChannelEnabled" checked>
+                                <label class="form-check-label" for="editChannelEnabled">启用</label>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-primary" onclick="saveChannel()">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+"""
+
+CHANNELS_JS = """
+    <script>
+        const channelsData = {{ channels_json|safe }};
+        
+        function onChannelTypeChange() {
+            const type = document.getElementById('editChannelType').value;
+            document.querySelectorAll('.channel-config').forEach(el => el.style.display = 'none');
+            const configDiv = document.getElementById('config_' + type);
+            if (configDiv) configDiv.style.display = 'block';
+        }
+        
+        function resetChannelModal() {
+            document.getElementById('addChannelModalTitle').textContent = '添加通道';
+            document.getElementById('editChannelId').value = '';
+            document.getElementById('editChannelName').value = '';
+            document.getElementById('editChannelType').value = 'wechat_work_api';
+            document.getElementById('editChannelEnabled').checked = true;
+            // 清空所有配置字段
+            document.querySelectorAll('.channel-config input').forEach(el => el.value = '');
+            document.getElementById('cfg_user_id').value = '@all';
+            onChannelTypeChange();
+        }
+        
+        function openEditChannel(id) {
+            const ch = channelsData.find(c => c.id === id);
+            if (!ch) return;
+            
+            document.getElementById('addChannelModalTitle').textContent = '编辑通道';
+            document.getElementById('editChannelId').value = ch.id;
+            document.getElementById('editChannelName').value = ch.name;
+            document.getElementById('editChannelType').value = ch.type;
+            document.getElementById('editChannelEnabled').checked = ch.enabled == 1;
+            
+            // 先切换显示对应的配置表单
+            onChannelTypeChange();
+            
+            const config = typeof ch.config === 'string' ? JSON.parse(ch.config) : ch.config;
+            
+            // 填充配置字段
+            if (config.corp_id) document.getElementById('cfg_corp_id').value = config.corp_id;
+            if (config.corp_secret) document.getElementById('cfg_corp_secret').value = config.corp_secret;
+            if (config.agent_id) document.getElementById('cfg_agent_id').value = config.agent_id;
+            if (config.user_id) {
+                // 把 | 分隔的字符串换成多行
+                document.getElementById('cfg_user_id').value = config.user_id.replace(/\|/g, '\\n');
+            }
+            if (config.webhook_url) {
+                if (ch.type === 'wechat_work_bot') document.getElementById('cfg_wwb_webhook_url').value = config.webhook_url;
+                else if (ch.type === 'dingtalk') document.getElementById('cfg_dingtalk_webhook_url').value = config.webhook_url;
+                else if (ch.type === 'feishu') document.getElementById('cfg_feishu_webhook_url').value = config.webhook_url;
+            }
+            if (config.secret) document.getElementById('cfg_dingtalk_secret').value = config.secret;
+            if (config.bot_token) document.getElementById('cfg_bot_token').value = config.bot_token;
+            if (config.chat_id) document.getElementById('cfg_chat_id').value = config.chat_id;
+            if (config.server_url) document.getElementById('cfg_server_url').value = config.server_url;
+            if (config.device_key) document.getElementById('cfg_device_key').value = config.device_key;
+            
+            onChannelTypeChange();
+            new bootstrap.Modal(document.getElementById('addChannelModal')).show();
+        }
+        
+        function saveChannel() {
+            const id = document.getElementById('editChannelId').value;
+            const type = document.getElementById('editChannelType').value;
+            
+            const config = {};
+            if (type === 'wechat_work_api') {
+                config.corp_id = document.getElementById('cfg_corp_id').value;
+                config.corp_secret = document.getElementById('cfg_corp_secret').value;
+                config.agent_id = document.getElementById('cfg_agent_id').value;
+                // 把多行文本用 | 连接
+                const userIdText = document.getElementById('cfg_user_id').value.trim();
+                config.user_id = userIdText ? userIdText.split('\\n').map(s => s.trim()).filter(s => s).join('|') : '';
+            } else if (type === 'wechat_work_bot') {
+                config.webhook_url = document.getElementById('cfg_wwb_webhook_url').value;
+            } else if (type === 'dingtalk') {
+                config.webhook_url = document.getElementById('cfg_dingtalk_webhook_url').value;
+                config.secret = document.getElementById('cfg_dingtalk_secret').value;
+            } else if (type === 'feishu') {
+                config.webhook_url = document.getElementById('cfg_feishu_webhook_url').value;
+            } else if (type === 'telegram_bot') {
+                config.bot_token = document.getElementById('cfg_bot_token').value;
+                config.chat_id = document.getElementById('cfg_chat_id').value;
+            } else if (type === 'bark') {
+                config.server_url = document.getElementById('cfg_server_url').value;
+                config.device_key = document.getElementById('cfg_device_key').value;
+            }
+            
+            const data = {
+                name: document.getElementById('editChannelName').value,
+                type: type,
+                config: config,
+                enabled: document.getElementById('editChannelEnabled').checked ? 1 : 0
+            };
+            
+            const url = id ? `/api/channels/${id}` : '/api/channels';
+            const method = id ? 'PUT' : 'POST';
+            
+            fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            })
+            .then(r => r.json())
+            .then(() => {
+                showToast('保存成功');
+                location.reload();
+            })
+            .catch(err => showToast('保存失败：' + err, 'danger'));
+        }
+        
+        function deleteChannel(id) {
+            if (!confirm('确定删除此通道？')) return;
+            fetch(`/api/channels/${id}`, {method: 'DELETE'})
+            .then(r => r.json())
+            .then(() => {
+                showToast('已删除');
+                location.reload();
+            })
+            .catch(err => showToast('删除失败：' + err, 'danger'));
+        }
+        
+        function testChannel(id) {
+            showToast('正在测试...', 'info');
+            fetch(`/api/channels/${id}/test`, {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('测试成功！', 'success');
+                } else {
+                    showToast('测试失败：' + (data.error || data.message), 'danger');
+                }
+            })
+            .catch(err => showToast('测试失败：' + err, 'danger'));
+        }
+        
+        document.addEventListener('DOMContentLoaded', onChannelTypeChange);
+    </script>
+"""
+

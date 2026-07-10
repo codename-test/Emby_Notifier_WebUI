@@ -41,7 +41,7 @@ def get_access_token(corp_id, corp_secret, token_cache):
         token_cache["access_token"] = res.json()["access_token"]
         token_cache["expires_in"] = res.json()["expires_in"]
         token_cache["expires_time"] = current_time + token_cache["expires_in"]
-        log.logger.info(f"Update WeChat access token successful. Token: {token_cache['access_token']}")
+        log.logger.debug(f"Update WeChat access token successful. Token: {token_cache['access_token']}")
         return token_cache["access_token"]
     except requests.exceptions.ConnectionError as e:
         log.logger.error(f"Get access token failed. Check network connection: {e}")
@@ -120,7 +120,7 @@ def check_authorization(corp_id, corp_secret):
         res.raise_for_status()
         if res.json()["errcode"] != 0:
             raise Exception(f"{res.text}")
-        log.logger.info(f"WeChat Work authorization successful. Corp ID: {corp_id}")
+        log.logger.debug(f"WeChat Work authorization successful. Corp ID: {corp_id}")
         return res.json()["access_token"]
     except requests.exceptions.ConnectionError as e:
         log.logger.error(f"WeChat Work authorization failed. Check network connection: {e}")

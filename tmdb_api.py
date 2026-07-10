@@ -39,14 +39,14 @@ def login():
     """
     headers = get_headers()
     if not headers:
-        log.logger.error("TMDB_API_TOKEN not configured! Please set it in WebUI.")
+        log.logger.critical("TMDB_API_TOKEN not configured! Please set it in WebUI.")
         return False
     
     login_url = f"{TMDB_API}/authentication"
     try:
         response = requests.get(login_url, headers=headers, timeout=5)
         response.raise_for_status()
-        log.logger.info("TMDB login successful.")
+        log.logger.debug("TMDB login successful.")
         return True
     except requests.exceptions.ConnectionError as e:
         log.logger.error(f"TMDB login failed. Check network connection: {e}")

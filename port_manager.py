@@ -246,9 +246,9 @@ class PortManager:
         port_config = db.get_port(port_id)
         if not port_config:
             return None
-        enabled_channels = db.get_enabled_channels(port_id)
-        if not enabled_channels:
+        channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
+        if not channel_ids:
             return None
         return PortSender(
-            port_id, port_config.get("server_name", ""), enabled_channels
+            port_id, port_config.get("server_name", ""), channel_ids
         )

@@ -59,12 +59,11 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            port_id INTEGER NOT NULL,
-            channel_type TEXT NOT NULL,
-            enabled INTEGER DEFAULT 0,
-            config TEXT DEFAULT '{}',
-            FOREIGN KEY (port_id) REFERENCES ports(id) ON DELETE CASCADE,
-            UNIQUE(port_id, channel_type)
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            config TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS dnd_settings (
@@ -128,6 +127,78 @@ def init_db():
         conn.execute("ALTER TABLE ports ADD COLUMN template_id INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # 迁移：添加 channel_ids 列
+    try:
+        conn.execute("ALTER TABLE ports ADD COLUMN channel_ids TEXT DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    # 迁移：wechat_configs → channels
+    wc_count = conn.execute("SELECT COUNT(*) FROM wechat_configs").fetchone()[0]
+    ch_count = conn.execute("SELECT COUNT(*) FROM channels").fetchone()[0]
+    if wc_count > 0 and ch_count == 0:
+        log.logger.info("Migrating wechat_configs to channels...")
+        # 建立 ID 映射：旧 wechat_config_id -> 新 channel_id
+        id_map = {}
+        for wc in conn.execute("SELECT * FROM wechat_configs").fetchall():
+            config = json.dumps({
+                "corp_id": wc["corp_id"],
+                "corp_secret": wc["corp_secret"],
+                "agent_id": wc["agent_id"],
+                "user_id": "",
+            })
+            cursor = conn.execute(
+                "INSERT INTO channels (name, type, config, enabled) VALUES (?, 'wechat_work_api', ?, ?)",
+                (wc["name"], config, wc["enabled"])
+            )
+            id_map[wc["id"]] = cursor.lastrowid
+        # 迁移 ports.wechat_config_id → ports.channel_ids
+        for port in conn.execute("SELECT id, wechat_config_id FROM ports").fetchall():
+            if port["wechat_config_id"] and port["wechat_config_id"] in id_map:
+                new_channel_id = id_map[port["wechat_config_id"]]
+                conn.execute(
+                    "UPDATE ports SET channel_ids=? WHERE id=?",
+                    (json.dumps([new_channel_id]), port["id"])
+                )
+        conn.commit()
+        log.logger.info(f"Migration complete: {len(id_map)} channel(s) migrated")
+    
+    # 迁移：ports.send_targets → channels.config.user_id
+    # 检查是否有端口配置了 send_targets
+    ports_with_targets = conn.execute(
+        "SELECT id, send_targets FROM ports WHERE send_targets IS NOT NULL AND send_targets != '[]'"
+    ).fetchall()
+    if ports_with_targets:
+        log.logger.info(f"Migrating send_targets from {len(ports_with_targets)} port(s) to wechat_work_api channels...")
+        for port in ports_with_targets:
+            port_id = port["id"]
+            try:
+                targets = json.loads(port["send_targets"]) if isinstance(port["send_targets"], str) else port["send_targets"]
+                if not targets:
+                    continue
+                # 将 targets 列表转换为逗号分隔的字符串
+                user_id_str = ",".join(targets) if isinstance(targets, list) else str(targets)
+                # 找到该端口关联的企微应用通道
+                channel_ids_str = conn.execute("SELECT channel_ids FROM ports WHERE id=?", (port_id,)).fetchone()["channel_ids"]
+                if not channel_ids_str:
+                    continue
+                channel_ids = json.loads(channel_ids_str) if isinstance(channel_ids_str, str) else channel_ids_str
+                for ch_id in channel_ids:
+                    ch = conn.execute("SELECT id, type, config FROM channels WHERE id=?", (ch_id,)).fetchone()
+                    if ch and ch["type"] == "wechat_work_api":
+                        config = json.loads(ch["config"]) if isinstance(ch["config"], str) else ch["config"]
+                        # 只有当 user_id 为空时才迁移
+                        if not config.get("user_id"):
+                            config["user_id"] = user_id_str
+                            conn.execute(
+                                "UPDATE channels SET config=? WHERE id=?",
+                                (json.dumps(config), ch_id)
+                            )
+                            log.logger.debug(f"Migrated send_targets to channel {ch_id}: {user_id_str}")
+            except Exception as e:
+                log.logger.error(f"Failed to migrate send_targets for port {port_id}: {e}")
+        conn.commit()
+        log.logger.info("send_targets migration complete")
+    
     # Ensure DND settings row exists
     conn.execute(
         "INSERT OR IGNORE INTO dnd_settings (id, enabled, start_time, end_time) "
@@ -189,25 +260,17 @@ def get_port_by_number(port_number):
     return dict(row) if row else None
 
 
-def create_port(port_number, server_name, server_type="Emby", server_url="", wechat_config_id=None, send_targets=None, template_id=1):
+def create_port(port_number, server_name, server_type="Emby", server_url="", template_id=1, channel_ids=None):
     conn = _get_conn()
     try:
-        send_targets_json = json.dumps(send_targets) if send_targets else "[]"
+        channel_ids_json = json.dumps(channel_ids) if channel_ids else "[]"
         cursor = conn.execute(
-            "INSERT INTO ports (port, server_name, server_type, server_url, wechat_config_id, send_targets, template_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (port_number, server_name, server_type, server_url, wechat_config_id, send_targets_json, template_id),
+            "INSERT INTO ports (port, server_name, server_type, server_url, template_id, channel_ids) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (port_number, server_name, server_type, server_url, template_id, channel_ids_json),
         )
         conn.commit()
         port_id = cursor.lastrowid
-        # Auto-create default channel entries
-        for ch, default_enabled in [("wechat_work", 1), ("telegram", 0), ("bark", 0)]:
-            conn.execute(
-                "INSERT OR IGNORE INTO channels (port_id, channel_type, enabled, config) "
-                "VALUES (?, ?, ?, '{}')",
-                (port_id, ch, default_enabled),
-            )
-        conn.commit()
         log.logger.info(f"Port created: id={port_id}, port={port_number}, name={server_name}")
         return port_id
     except sqlite3.IntegrityError:
@@ -217,11 +280,11 @@ def create_port(port_number, server_name, server_type="Emby", server_url="", wec
 
 def update_port(port_id, **kwargs):
     conn = _get_conn()
-    allowed = {"port", "server_name", "server_url", "wechat_config_id", "send_targets", "enabled", "template_id"}
+    allowed = {"port", "server_name", "server_url", "enabled", "template_id", "channel_ids"}
     fields = {}
     for k, v in kwargs.items():
         if k in allowed and v is not None:
-            if k == "send_targets" and isinstance(v, (list, dict)):
+            if k == "channel_ids" and isinstance(v, (list, dict)):
                 fields[k] = json.dumps(v)
             else:
                 fields[k] = v
@@ -238,74 +301,9 @@ def update_port(port_id, **kwargs):
 
 def delete_port(port_id):
     conn = _get_conn()
-    conn.execute("DELETE FROM channels WHERE port_id=?", (port_id,))
     conn.execute("DELETE FROM message_queue WHERE port_id=?", (port_id,))
     conn.execute("DELETE FROM ports WHERE id=?", (port_id,))
     conn.commit()
-
-
-# ──────────────────────────────────────────────
-#  Channel CRUD
-# ──────────────────────────────────────────────
-
-def get_channels(port_id):
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM channels WHERE port_id=?", (port_id,)
-    ).fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["config"] = json.loads(d["config"]) if d["config"] else {}
-        result.append(d)
-    return result
-
-
-def get_channel(port_id, channel_type):
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT * FROM channels WHERE port_id=? AND channel_type=?",
-        (port_id, channel_type),
-    ).fetchone()
-    if not row:
-        return None
-    d = dict(row)
-    d["config"] = json.loads(d["config"]) if d["config"] else {}
-    return d
-
-
-def save_channel(port_id, channel_type, config, enabled=False):
-    conn = _get_conn()
-    conn.execute(
-        "INSERT INTO channels (port_id, channel_type, enabled, config) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(port_id, channel_type) "
-        "DO UPDATE SET config=excluded.config, enabled=excluded.enabled",
-        (port_id, channel_type, int(enabled), json.dumps(config, ensure_ascii=False)),
-    )
-    conn.commit()
-
-
-def toggle_channel(port_id, channel_type, enabled):
-    conn = _get_conn()
-    conn.execute(
-        "UPDATE channels SET enabled=? WHERE port_id=? AND channel_type=?",
-        (int(enabled), port_id, channel_type),
-    )
-    conn.commit()
-
-
-def get_enabled_channels(port_id):
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM channels WHERE port_id=? AND enabled=1", (port_id,)
-    ).fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["config"] = json.loads(d["config"]) if d["config"] else {}
-        result.append(d)
-    return result
 
 
 # ──────────────────────────────────────────────
@@ -509,15 +507,106 @@ def delete_wechat_config(config_id):
 
 
 # ──────────────────────────────────────────────
+#  Channel Management (多通道)
+# ──────────────────────────────────────────────
+
+def get_all_channels():
+    """获取所有通道配置"""
+    conn = _get_conn()
+    cursor = conn.execute("SELECT * FROM channels ORDER BY id")
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def get_channel(channel_id):
+    """获取单个通道配置"""
+    conn = _get_conn()
+    cursor = conn.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def create_channel(name, channel_type, config, enabled=1):
+    """创建通道配置"""
+    conn = _get_conn()
+    cursor = conn.execute(
+        "INSERT INTO channels (name, type, config, enabled) VALUES (?, ?, ?, ?)",
+        (name, channel_type, config, enabled)
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def update_channel(channel_id, name=None, channel_type=None, config=None, enabled=None):
+    """更新通道配置"""
+    conn = _get_conn()
+    fields = []
+    values = []
+    if name is not None:
+        fields.append("name=?")
+        values.append(name)
+    if channel_type is not None:
+        fields.append("type=?")
+        values.append(channel_type)
+    if config is not None:
+        fields.append("config=?")
+        values.append(config)
+    if enabled is not None:
+        fields.append("enabled=?")
+        values.append(enabled)
+    if fields:
+        values.append(channel_id)
+        conn.execute(f"UPDATE channels SET {', '.join(fields)} WHERE id=?", values)
+        conn.commit()
+
+
+def delete_channel(channel_id):
+    """删除通道配置"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+    conn.commit()
+    # 清理 ports 中的引用
+    for port in conn.execute("SELECT id, channel_ids FROM ports").fetchall():
+        try:
+            ids = json.loads(port["channel_ids"] or "[]")
+            if channel_id in ids:
+                ids.remove(channel_id)
+                conn.execute("UPDATE ports SET channel_ids=? WHERE id=?", (json.dumps(ids), port["id"]))
+        except:
+            pass
+    conn.commit()
+
+
+def get_enabled_channels_for_port(port_id):
+    """获取端口关联的已启用通道"""
+    conn = _get_conn()
+    port = conn.execute("SELECT channel_ids FROM ports WHERE id=?", (port_id,)).fetchone()
+    if not port:
+        return []
+    
+    channel_ids = json.loads(port["channel_ids"] or "[]")
+    if not channel_ids:
+        return []
+    
+    placeholders = ",".join(["?"] * len(channel_ids))
+    cursor = conn.execute(
+        f"SELECT * FROM channels WHERE id IN ({placeholders}) AND enabled=1",
+        channel_ids
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+# ──────────────────────────────────────────────
 #  Logs
 # ──────────────────────────────────────────────
 
 def add_log(level, message, module="", port_id=None):
     """写入一条日志，自动清理超过 10000 条的旧记录"""
     conn = _get_conn()
+    from datetime import datetime
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute(
-        "INSERT INTO logs (level, message, module, port_id) VALUES (?, ?, ?, ?)",
-        (level, message, module, port_id)
+        "INSERT INTO logs (timestamp, level, message, module, port_id) VALUES (?, ?, ?, ?, ?)",
+        (now, level, message, module, port_id)
     )
     # 保留最近 10000 条
     conn.execute("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 10000)")
@@ -525,13 +614,19 @@ def add_log(level, message, module="", port_id=None):
 
 
 def get_logs(level=None, limit=200, offset=0, port_id=None):
-    """查询日志，按时间倒序"""
+    """查询日志，按时间倒序，level 为最低级别（显示等于和高于此级别的日志）"""
     conn = _get_conn()
     sql = "SELECT * FROM logs WHERE 1=1"
     params = []
     if level:
-        sql += " AND level = ?"
-        params.append(level)
+        # 日志等级：DEBUG < INFO < WARNING < ERROR < CRITICAL
+        level_order = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
+        min_level = level_order.get(level.upper(), 1)
+        # 构建 IN 条件：包含所选级别及更高级别
+        levels_to_show = [l for l, v in level_order.items() if v >= min_level]
+        placeholders = ",".join(["?"] * len(levels_to_show))
+        sql += f" AND level IN ({placeholders})"
+        params.extend(levels_to_show)
     if port_id is not None:
         sql += " AND port_id = ?"
         params.append(port_id)
