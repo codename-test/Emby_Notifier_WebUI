@@ -2153,6 +2153,11 @@ CHANNELS_JS = """
                 config.user_id = userIdText ? userIdText.split('\\n').map(s => s.trim()).filter(s => s).join('|') : '';
                 config.party_id = document.getElementById('cfg_party_id').value.trim();
                 config.tag_id = document.getElementById('cfg_tag_id').value.trim();
+                // 验证：接收人/部门ID/标签ID 至少填一个
+                if (!config.user_id && !config.party_id && !config.tag_id) {
+                    showToast('接收人、部门 ID、标签 ID 至少填写一项', 'danger');
+                    return;
+                }
             } else if (type === 'wechat_work_bot') {
                 config.webhook_url = document.getElementById('cfg_wwb_webhook_url').value;
             } else if (type === 'dingtalk') {
