@@ -21,6 +21,8 @@ class WechatWorkAPI(BaseChannel):
         self.corp_secret = config.get("corp_secret", "")
         self.agent_id = config.get("agent_id", "")
         self.user_id = config.get("user_id", "")
+        self.party_id = config.get("party_id", "")
+        self.tag_id = config.get("tag_id", "")
         self._access_token = None
     
     def _get_access_token(self) -> str:
@@ -46,7 +48,7 @@ class WechatWorkAPI(BaseChannel):
         return ""
     
     def send(self, media: dict, template: dict) -> bool:
-        """发送图文消息。"""
+        """发送消息（根据模板类型选择图文或文本）。"""
         token = self._get_access_token()
         if not token:
             log.logger.error("WeChat Work API: No access token")
@@ -56,22 +58,44 @@ class WechatWorkAPI(BaseChannel):
         
         url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}"
         
-        # 构建图文消息
-        articles = [{
-            "title": content["title"],
-            "description": content["description"],
-            "url": content.get("tmdb_url", ""),
-            "picurl": content.get("picurl", ""),
-        }]
+        # 根据模板是否有图片选择消息类型
+        enable_image = template.get("enable_image", 1)
         
-        payload = {
-            "touser": self.user_id,
-            "msgtype": "news",
-            "agentid": self.agent_id,
-            "news": {
-                "articles": articles,
-            },
-        }
+        if enable_image:
+            # 图文消息
+            articles = [{
+                "title": content["title"],
+                "description": content["description"],
+                "url": content.get("tmdb_url", ""),
+                "picurl": content.get("picurl", ""),
+            }]
+            
+            payload = {
+                "touser": self.user_id,
+                "toparty": self.party_id,
+                "totag": self.tag_id,
+                "msgtype": "news",
+                "agentid": self.agent_id,
+                "news": {
+                    "articles": articles,
+                },
+            }
+        else:
+            # 纯文本消息（回退模板）
+            text_content = content["title"] + "\n\n" + content["description"]
+            if content.get("tmdb_url"):
+                text_content += "\n\n" + content["tmdb_url"]
+            
+            payload = {
+                "touser": self.user_id,
+                "toparty": self.party_id,
+                "totag": self.tag_id,
+                "msgtype": "text",
+                "agentid": self.agent_id,
+                "text": {
+                    "content": text_content,
+                },
+            }
         
         try:
             resp = requests.post(url, json=payload, timeout=15)
@@ -95,6 +119,8 @@ class WechatWorkAPI(BaseChannel):
         url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}"
         payload = {
             "touser": self.user_id,
+            "toparty": self.party_id,
+            "totag": self.tag_id,
             "msgtype": "text",
             "agentid": self.agent_id,
             "text": {

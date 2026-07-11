@@ -314,12 +314,15 @@ def create_media(media_type):
 # ──────────────────────────────────────────────
 
 
-def process_media(msg, port_id):
+def process_media(msg, port_id, skip_dnd=False):
     """
     处理媒体消息主入口。
     1. 解析 Webhook JSON
-    2. 检查 DND 状态
+    2. 检查 DND 状态（skip_dnd=True 时跳过）
     3. DND 中 → 存入队列; 非 DND → 获取详情并推送
+    
+    Returns:
+        bool: True if message was sent successfully, False otherwise
     """
     # 预处理 Jellyfin 消息
     msg = jellyfin_msg_preprocess(msg)
@@ -327,20 +330,20 @@ def process_media(msg, port_id):
 
     if "Emby" not in data:
         log.logger.debug("No 'Emby' field in message, skipping.")
-        return
+        return False
 
     emby_data = data["Emby"]
     event = data.get("Event", "")
 
     if event != "library.new":
         log.logger.debug(f"Event '{event}' is not 'library.new', skipping.")
-        return
+        return False
 
     # 检查端口配置
     port_config = db.get_port(port_id)
     if port_config is None:
         log.logger.error(f"Port config not found for port_id={port_id}")
-        return
+        return False
 
     # 覆盖 server_name
     if port_config.get("server_name"):
@@ -349,26 +352,36 @@ def process_media(msg, port_id):
         emby_data["ServerURL"] = port_config["server_url"]
     emby_data["ServerType"] = "Emby"
 
-    # 检查 DND
-    dnd = db.get_dnd_settings()
-    if dnd["enabled"] and _is_in_dnd(dnd["start_time"], dnd["end_time"]):
-        log.logger.info(
-            f"[Port {port_id}] DND active, queuing message."
-        )
-        db.enqueue_message(port_id, json.dumps(emby_data, ensure_ascii=False))
-        return
+    # 检查 DND（skip_dnd 时跳过，用于队列刷新）
+    if not skip_dnd:
+        dnd = db.get_dnd_settings()
+        if dnd["enabled"] and _is_in_dnd(dnd["start_time"], dnd["end_time"]):
+            log.logger.info(
+                f"[Port {port_id}] DND active, queuing message."
+            )
+            db.enqueue_message(port_id, json.dumps(emby_data, ensure_ascii=False))
+            return False
 
     # 非 DND，处理并推送
-    _fetch_and_send(emby_data, port_id)
+    try:
+        _fetch_and_send(emby_data, port_id)
+        return True
+    except Exception as e:
+        log.logger.error(f"[Port {port_id}] Send failed: {e}")
+        return False
 
 
 def _fetch_and_send(emby_data, port_id):
-    """获取媒体详情并推送"""
+    """获取媒体详情并推送
+    
+    Returns:
+        bool: True if sent successfully to all channels, False otherwise
+    """
     media_type = emby_data.get("Type", "")
     media_obj = create_media(media_type)
     if media_obj is None:
         log.logger.error(f"Unsupported media type: {media_type}")
-        return
+        return False
 
     media_obj.port_id_ = port_id
     media_obj.parse_info(emby_data)
@@ -381,7 +394,8 @@ def _fetch_and_send(emby_data, port_id):
 
     if skip_tmdb:
         log.logger.debug(f"[Port {port_id}] No-image template '{template['name']}', skipping TMDB fetch")
-        media_obj.media_detail_["tmdb_failed"] = True
+        media_obj.media_detail_["skip_tmdb"] = True
+        media_obj.media_detail_["tmdb_failed"] = False
         media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
         media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
         media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
@@ -393,6 +407,7 @@ def _fetch_and_send(emby_data, port_id):
         except Exception as e:
             log.logger.warning(f"[Port {port_id}] TMDB fetch failed: {e}, using fallback template")
             media_obj.media_detail_["tmdb_failed"] = True
+            media_obj.media_detail_["skip_tmdb"] = False
             media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
             media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
             media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
@@ -405,51 +420,54 @@ def _fetch_and_send(emby_data, port_id):
     channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
     if not channel_ids:
         log.logger.error(f"[Port {port_id}] No channels configured, skipping push.")
-        return
+        return False
 
     sender = PortSender(
         port_id,
         port_config.get("server_name", ""),
         channel_ids,
     )
-    sender.send_media_details(media_obj.media_detail_)
-    log.logger.debug(f"[Port {port_id}] Media details sent successfully.")
+    
+    if not sender.has_channels():
+        log.logger.error(f"[Port {port_id}] No channels available, cannot send.")
+        return False
+    
+    ok = sender.send_media_details(media_obj.media_detail_)
+    if ok:
+        log.logger.debug(f"[Port {port_id}] Media details sent successfully.")
+    else:
+        log.logger.error(f"[Port {port_id}] Some channels failed to send.")
+    return ok
 
 
 def flush_queue_for_port(port_id):
-    """处理指定端口的队列消息"""
+    """处理指定端口的队列消息，复用 _fetch_and_send 的完整推送逻辑"""
     messages = db.get_pending_messages(port_id)
     if not messages:
         return 0
 
     port_config = db.get_port(port_id)
-    channel_ids = json.loads(port_config.get("channel_ids", "[]")) if port_config else []
-    if not channel_ids:
-        log.logger.error(f"[Port {port_id}] No channels configured for queue flush.")
+    if port_config is None:
         return 0
-
-    sender = PortSender(
-        port_id,
-        port_config.get("server_name", ""),
-        channel_ids,
-    )
 
     sent_count = 0
     for msg in messages:
         try:
             emby_data = json.loads(msg["media_json"])
-            media_type = emby_data.get("Type", "")
-            media_obj = create_media(media_type)
-            if media_obj is None:
-                db.update_message_status(msg["id"], "failed", "Unsupported media type")
-                continue
+            # 确保有 ServerType 和 ServerName
+            if "ServerType" not in emby_data:
+                emby_data["ServerType"] = "Emby"
+            if "ServerName" not in emby_data and port_config.get("server_name"):
+                emby_data["ServerName"] = port_config["server_name"]
 
-            media_obj.parse_info(emby_data)
-            media_obj.get_details()
-            sender.send_media_details(media_obj.media_detail_)
-            db.update_message_status(msg["id"], "sent")
-            sent_count += 1
-            log.logger.debug(f"[Port {port_id}] Queue message #{msg['id']} sent.")
+            ok = _fetch_and_send(emby_data, port_id)
+            if ok:
+                db.delete_message(msg["id"])
+                sent_count += 1
+                log.logger.debug(f"[Port {port_id}] Queue message #{msg['id']} sent and deleted.")
+            else:
+                db.update_message_status(msg["id"], "failed", "Channel send failed (see logs)")
+                log.logger.warning(f"[Port {port_id}] Queue message #{msg['id']} send failed.")
         except Exception as e:
             db.update_message_status(msg["id"], "failed", str(e))
             log.logger.error(

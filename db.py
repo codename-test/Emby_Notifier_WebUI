@@ -365,12 +365,12 @@ def get_pending_messages(port_id=None):
     conn = _get_conn()
     if port_id:
         rows = conn.execute(
-            "SELECT * FROM message_queue WHERE port_id=? AND status='pending' ORDER BY created_at",
+            "SELECT * FROM message_queue WHERE port_id=? AND status IN ('pending','failed') ORDER BY created_at",
             (port_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM message_queue WHERE status='pending' ORDER BY created_at"
+            "SELECT * FROM message_queue WHERE status IN ('pending','failed') ORDER BY created_at"
         ).fetchall()
     return [dict(r) for r in rows]
 

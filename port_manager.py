@@ -115,7 +115,7 @@ class PortServer:
                 f"{request.content_type}"
             )
         else:
-            log.logger.debug(f"[Port {self.port_number}] Received: {data[:200]}...")
+            log.logger.debug(f"[Port {self.port_number}] Received: {data}")
             await self._queue.put(data)
         return web.Response(text="OK")
 

@@ -127,6 +127,29 @@ def main():
     dnd_thread.start()
     log.logger.info("DND queue checker started.")
 
+    # 3.5 启动时检查队列，如果有 pending 消息且不在 DND 时间段，立即刷新
+    try:
+        dnd = db.get_dnd_settings()
+        in_dnd = dnd["enabled"] and media._is_in_dnd(dnd["start_time"], dnd["end_time"])
+        if not in_dnd:
+            pending = db.get_pending_messages()
+            if pending:
+                log.logger.info(f"Startup: {len(pending)} pending messages found. Flushing...")
+                for p in ports:
+                    if p["enabled"]:
+                        try:
+                            count = media.flush_queue_for_port(p["id"])
+                            if count > 0:
+                                log.logger.info(
+                                    f"[Port {p['port']}] Flushed {count} queued messages."
+                                )
+                        except Exception as e:
+                            log.logger.error(
+                                f"[Port {p['port']}] Failed to flush queue: {e}"
+                            )
+    except Exception as e:
+        log.logger.error(f"Startup queue flush error: {e}")
+
     # 4. 启动 WebUI
     web_port = int(os.getenv("WEB_PORT", "5000"))
     web_thread = threading.Thread(

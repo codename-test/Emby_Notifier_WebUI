@@ -73,11 +73,16 @@ class PortSender:
         return results
 
     def send_media_details(self, media: dict):
-        """推送媒体详情到所有通道"""
+        """推送媒体详情到所有通道
+        
+        Returns:
+            bool: True if ALL channels sent successfully, False otherwise
+        """
         # 选择模板（标准/回退）
         template = self._select_template(media)
 
         results = []
+        all_ok = True
         for channel in self.channels:
             try:
                 ok = channel.send(media, template)
@@ -85,17 +90,19 @@ class PortSender:
                 if ok:
                     log.logger.debug(f"[Port {self.port_id}] {channel.CHANNEL_NAME}: sent successfully")
                 else:
+                    all_ok = False
                     log.logger.error(f"[Port {self.port_id}] {channel.CHANNEL_NAME}: send failed")
             except Exception as e:
                 results.append({"channel": channel.CHANNEL_NAME, "ok": False, "error": str(e)})
+                all_ok = False
                 log.logger.error(f"[Port {self.port_id}] {channel.CHANNEL_NAME} error: {e}")
 
-        return results
+        return all_ok
 
     def _select_template(self, media: dict) -> dict:
         """根据媒体数据选择模板"""
-        # TMDB 失败时使用回退模板
-        if media.get("tmdb_failed"):
+        # TMDB 失败时使用回退模板（主动跳过 TMDB 的不算失败）
+        if media.get("tmdb_failed") and not media.get("skip_tmdb"):
             fallback = db.get_fallback_template()
             if fallback:
                 log.logger.warning(f"[Port {self.port_id}] Using fallback template: {fallback.get('name', 'fallback')}")
@@ -108,3 +115,7 @@ class PortSender:
         if not template:
             template = db.get_template(1)  # 默认标准模板
         return template
+
+    def has_channels(self) -> bool:
+        """检查是否有可用通道"""
+        return len(self.channels) > 0

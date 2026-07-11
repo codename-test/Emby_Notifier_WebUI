@@ -488,21 +488,15 @@ def api_get_queue():
 
 @app.route("/api/queue/flush", methods=["POST"])
 def api_flush_queue():
-    """Flush pending messages (trigger send)"""
-    pending = db.get_pending_messages()
+    """Flush pending/failed messages (trigger send)"""
     count = 0
-    for msg in pending:
-        port = db.get_port(msg["port_id"])
-        if port:
+    for p in db.get_all_ports():
+        if p["enabled"]:
             try:
-                media_detail = json.loads(msg["media_json"])
-                channels = db.get_enabled_channels(msg["port_id"])
-                for ch in channels:
-                    media.send_notification(ch, media_detail, port["server_name"])
-                db.update_message_status(msg["id"], "sent")
-                count += 1
+                n = media.flush_queue_for_port(p["id"])
+                count += n
             except Exception as e:
-                db.update_message_status(msg["id"], "failed", str(e))
+                log.logger.error(f"[Port {p['port']}] Flush error: {e}")
     return jsonify({"count": count})
 
 
@@ -617,6 +611,31 @@ def api_get_logs():
 def api_clear_logs():
     db.clear_logs()
     return jsonify({"status": "cleared"})
+
+
+@app.route("/api/logs/export")
+def api_export_logs():
+    """导出完整日志为文本文件"""
+    from flask import Response
+    from datetime import datetime
+    
+    logs = db.get_logs(limit=10000)
+    lines = []
+    for log in logs:
+        timestamp = log.get("timestamp", "")
+        level = log.get("level", "")
+        module = log.get("module", "")
+        message = log.get("message", "")
+        lines.append(f"[{timestamp}] [{level}] [{module}] {message}")
+    
+    content = "\n".join(lines)
+    filename = f"emby_notifier_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    return Response(
+        content,
+        mimetype="text/plain",
+        headers={"Content-disposition": f"attachment; filename={filename}"}
+    )
 @app.route("/api/templates", methods=["GET"])
 def api_get_templates():
     return jsonify(db.get_templates())
@@ -1608,13 +1627,32 @@ LOGS_CONTENT = """
                         <th style="width:160px">时间</th>
                         <th style="width:80px">级别</th>
                         <th style="width:120px">模块</th>
-                        <th>消息</th>
+                        <th>消息 <small class="text-muted">(点击展开/复制)</small></th>
                     </tr>
                 </thead>
                 <tbody id="logTableBody">
                     <tr><td colspan="4" class="text-center text-muted">加载中...</td></tr>
                 </tbody>
             </table>
+        </div>
+        <!-- 日志详情弹窗 -->
+        <div class="modal fade" id="logDetailModal" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header py-2">
+                        <h6 class="modal-title">日志详情</h6>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary me-2" onclick="copyLogDetail()">
+                                <i class="bi bi-clipboard"></i> 复制
+                            </button>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <pre id="logDetailContent" class="bg-light p-3 rounded" style="white-space:pre-wrap;word-break:break-all;font-size:0.85rem;max-height:60vh;overflow-y:auto"></pre>
+                    </div>
+                </div>
+            </div>
         </div>
 """
 
@@ -1628,6 +1666,8 @@ LOGS_JS = """
             'CRITICAL': 'dark'
         };
 
+        let currentLogMessage = '';
+
         async function loadLogs() {
             const level = document.getElementById('logLevelFilter').value;
             const url = level ? '/api/logs?level=' + level + '&limit=200' : '/api/logs?limit=200';
@@ -1637,16 +1677,33 @@ LOGS_JS = """
                 tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">暂无日志</td></tr>';
                 return;
             }
-            tbody.innerHTML = logs.map(l => {
+            tbody.innerHTML = logs.map((l, idx) => {
                 const ts = l.timestamp ? l.timestamp.replace('T', ' ').substring(0, 19) : '';
                 const color = levelColors[l.level] || 'secondary';
-                return '<tr>' +
+                const msg = l.message || '';
+                const shortMsg = msg.length > 100 ? msg.substring(0, 100) + '...' : msg;
+                return '<tr style="cursor:pointer" onclick="showLogDetail(' + idx + ')">' +
                     '<td class="text-nowrap">' + ts + '</td>' +
                     '<td><span class="badge bg-' + color + '">' + (l.level || '') + '</span></td>' +
                     '<td>' + (l.module || '') + '</td>' +
-                    '<td style="word-break:break-all">' + (l.message || '') + '</td>' +
+                    '<td style="word-break:break-all">' + shortMsg.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</td>' +
                     '</tr>';
             }).join('');
+            window._logMessages = logs.map(l => l.message || '');
+        }
+
+        function showLogDetail(idx) {
+            currentLogMessage = window._logMessages[idx] || '';
+            document.getElementById('logDetailContent').textContent = currentLogMessage;
+            new bootstrap.Modal(document.getElementById('logDetailModal')).show();
+        }
+
+        function copyLogDetail() {
+            navigator.clipboard.writeText(currentLogMessage).then(() => {
+                showToast('已复制到剪贴板');
+            }).catch(() => {
+                showToast('复制失败', 'danger');
+            });
         }
 
         async function clearLogs() {
@@ -1940,6 +1997,16 @@ CHANNELS_CONTENT = """
                                     <textarea class="form-control" id="cfg_user_id" rows="3" placeholder="每行一个用户 ID&#10;例如：&#10;@all&#10;zhangsan&#10;lisi"></textarea>
                                     <div class="form-text">"@all" 表示所有人，多个用户每行一个</div>
                                 </div>
+                                <div class="mb-3">
+                                    <label class="form-label">部门 ID</label>
+                                    <input type="text" class="form-control" id="cfg_party_id" placeholder="部门 ID，多个用 | 分隔">
+                                    <div class="form-text">可选，指定接收消息的部门</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">标签 ID</label>
+                                    <input type="text" class="form-control" id="cfg_tag_id" placeholder="标签 ID，多个用 | 分隔">
+                                    <div class="form-text">可选，指定接收消息的标签</div>
+                                </div>
                             </div>
                             
                             <!-- 企业微信机器人配置 -->
@@ -2055,6 +2122,8 @@ CHANNELS_JS = """
                 // 把 | 分隔的字符串换成多行
                 document.getElementById('cfg_user_id').value = config.user_id.replace(/\|/g, '\\n');
             }
+            if (config.party_id) document.getElementById('cfg_party_id').value = config.party_id;
+            if (config.tag_id) document.getElementById('cfg_tag_id').value = config.tag_id;
             if (config.webhook_url) {
                 if (ch.type === 'wechat_work_bot') document.getElementById('cfg_wwb_webhook_url').value = config.webhook_url;
                 else if (ch.type === 'dingtalk') document.getElementById('cfg_dingtalk_webhook_url').value = config.webhook_url;
@@ -2082,6 +2151,8 @@ CHANNELS_JS = """
                 // 把多行文本用 | 连接
                 const userIdText = document.getElementById('cfg_user_id').value.trim();
                 config.user_id = userIdText ? userIdText.split('\\n').map(s => s.trim()).filter(s => s).join('|') : '';
+                config.party_id = document.getElementById('cfg_party_id').value.trim();
+                config.tag_id = document.getElementById('cfg_tag_id').value.trim();
             } else if (type === 'wechat_work_bot') {
                 config.webhook_url = document.getElementById('cfg_wwb_webhook_url').value;
             } else if (type === 'dingtalk') {
