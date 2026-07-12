@@ -23,7 +23,7 @@ class BaseChannel:
         year = media.get("media_rel", "")[:4] if media.get("media_rel") else ""
         episode = media.get("media_episode", "")
         name = media.get("media_name", "")
-        date = media.get("media_date", "")
+        date = media.get("media_rel", "")
         rating = media.get("media_rating", 0)
         intro = media.get("media_intro", "")
         tmdb_url = media.get("media_tmdburl", "")
