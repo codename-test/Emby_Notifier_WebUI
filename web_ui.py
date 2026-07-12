@@ -1699,11 +1699,30 @@ LOGS_JS = """
         }
 
         function copyLogDetail() {
-            navigator.clipboard.writeText(currentLogMessage).then(() => {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(currentLogMessage).then(() => {
+                    showToast('已复制到剪贴板');
+                }).catch(() => {
+                    fallbackCopy();
+                });
+            } else {
+                fallbackCopy();
+            }
+        }
+        function fallbackCopy() {
+            const textarea = document.createElement('textarea');
+            textarea.value = currentLogMessage;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
                 showToast('已复制到剪贴板');
-            }).catch(() => {
+            } catch (e) {
                 showToast('复制失败', 'danger');
-            });
+            }
+            document.body.removeChild(textarea);
         }
 
         async function clearLogs() {
