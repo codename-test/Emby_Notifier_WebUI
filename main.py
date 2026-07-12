@@ -103,6 +103,7 @@ def main():
     # 1. 初始化数据库
     log.logger.info("Initializing database...")
     db.init_db()
+    db.cleanup_dedup()  # 清理超过24小时的去重记录
 
     # 1.5 从数据库读取日志等级并应用
     log_level = db.get_log_level()

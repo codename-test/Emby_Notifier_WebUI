@@ -377,6 +377,12 @@ def _fetch_and_send(emby_data, port_id):
     Returns:
         bool: True if sent successfully to all channels, False otherwise
     """
+    # 去重：同一 ItemId + Event 24小时内不重复推送
+    item_id = emby_data.get("Id", "")
+    if item_id and db.is_duplicate_webhook(item_id):
+        log.logger.debug(f"[Port {port_id}] Duplicate webhook skipped: item_id={item_id}")
+        return False
+
     media_type = emby_data.get("Type", "")
     media_obj = create_media(media_type)
     if media_obj is None:
@@ -435,6 +441,8 @@ def _fetch_and_send(emby_data, port_id):
     ok = sender.send_media_details(media_obj.media_detail_)
     if ok:
         log.logger.debug(f"[Port {port_id}] Media details sent successfully.")
+        if item_id:
+            db.record_webhook(item_id)
     else:
         log.logger.error(f"[Port {port_id}] Some channels failed to send.")
     return ok

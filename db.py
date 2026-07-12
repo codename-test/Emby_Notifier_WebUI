@@ -101,6 +101,14 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
         CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
 
+        CREATE TABLE IF NOT EXISTS webhook_dedup (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id TEXT NOT NULL,
+            event TEXT NOT NULL DEFAULT 'library.new',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_dedup_item ON webhook_dedup(item_id, event);
+
         CREATE TABLE IF NOT EXISTS push_templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -751,5 +759,40 @@ def delete_template(template_id):
     """删除推送模板"""
     conn = _get_conn()
     conn.execute("DELETE FROM push_templates WHERE id=?", (template_id,))
+    conn.commit()
+
+
+# ──────────────────────────────────────────────
+#  Webhook Dedup (24h)
+# ──────────────────────────────────────────────
+
+def is_duplicate_webhook(item_id, event="library.new", hours=24):
+    """检查 item_id + event 在指定小时内是否已有推送记录。"""
+    conn = _get_conn()
+    row = conn.execute(
+        """SELECT COUNT(*) FROM webhook_dedup
+           WHERE item_id=? AND event=?
+           AND created_at > datetime('now', ?)""",
+        (item_id, event, f"-{hours} hours")
+    ).fetchone()
+    return row[0] > 0
+
+
+def record_webhook(item_id, event="library.new"):
+    """记录 webhook 推送。"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO webhook_dedup (item_id, event) VALUES (?, ?)",
+        (item_id, event)
+    )
+    conn.commit()
+
+
+def cleanup_dedup():
+    """清理超过 24 小时的旧记录（启动时调用一次即可）。"""
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM webhook_dedup WHERE created_at < datetime('now', '-24 hours')"
+    )
     conn.commit()
 
