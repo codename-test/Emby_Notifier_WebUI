@@ -204,7 +204,7 @@ class Episode(IMedia):
 
         self.media_detail_["media_name"] = tv_details.get("name", self.info_["Name"])
         self.media_detail_["media_rating"] = tv_details.get("vote_average", 0)
-        self.media_detail_["media_intro"] = tv_details.get("overview", "暂无简介")
+        self.media_detail_["media_intro"] = ep_details.get("overview", tv_details.get("overview", "暂无简介"))
         self.media_detail_["media_tmdburl"] = (
             f"https://www.themoviedb.org/tv/{tmdb_id}?language=zh-CN"
         )
