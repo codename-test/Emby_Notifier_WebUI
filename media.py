@@ -164,7 +164,7 @@ class Episode(IMedia):
     def parse_info(self, emby_media_info):
         self.info_["Name"] = emby_media_info.get("SeriesName", "")
         self.info_["Season"] = emby_media_info.get("SeasonNumber", 0)
-        self.info_["Episode"] = emby_media_info.get("IndexNumber", 0)
+        self.info_["Episode"] = emby_media_info.get("IndexNumber", emby_media_info.get("EpisodeNumber", 0))
         date_str = emby_media_info.get("PremiereDate", "")
         if date_str:
             self.info_["PremiereYear"] = int(date_str[0:4])

@@ -1649,7 +1649,7 @@ LOGS_CONTENT = """
                         </div>
                     </div>
                     <div class="modal-body">
-                        <pre id="logDetailContent" class="bg-light p-3 rounded" style="white-space:pre-wrap;word-break:break-all;font-size:0.85rem;max-height:60vh;overflow-y:auto"></pre>
+                        <textarea id="logDetailContent" class="bg-light p-3 rounded form-control" readonly style="white-space:pre-wrap;word-break:break-all;font-size:0.85rem;max-height:60vh;overflow-y:auto;resize:none;border:none;height:60vh;font-family:SFMono-Regular,Menlo,Monaco,Consolas,monospace" onclick="this.select()"></textarea>
                     </div>
                 </div>
             </div>
