@@ -176,6 +176,8 @@ class Episode(IMedia):
         self.media_detail_["tv_season"] = self.info_["Season"]
         self.media_detail_["tv_episode"] = self.info_["Episode"]
         self.media_detail_["tv_episode_name"] = emby_media_info.get("Name", "")
+        s, e = self.info_["Season"], self.info_["Episode"]
+        self.media_detail_["media_episode"] = f"第{s}季第{e}集" if s and e else ""
 
         # If SeriesName has no ProviderIds, try to get from Item
         if not self.info_["ProviderIds"].get("Tvdb"):
