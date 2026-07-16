@@ -22,6 +22,7 @@ class BaseChannel:
         type_ch = "电影" if media.get("media_type") == "Movie" else "剧集"
         year = media.get("media_rel", "")[:4] if media.get("media_rel") else ""
         episode = media.get("media_episode", "")
+        episode_name = media.get("tv_episode_name", "")
         name = media.get("media_name", "")
         date = media.get("media_rel", "")
         rating = media.get("media_rating", 0)
@@ -44,11 +45,11 @@ class BaseChannel:
                 picurl = media.get("media_still", "")
         
         title = template.get("title", "{type}更新").format(
-            type=type_ch, name=name, year=year, episode=episode
+            type=type_ch, name=name, year=year, episode=episode, episode_name=episode_name
         )
         
         description = template.get("description", "").format(
-            type=type_ch, name=name, year=year, episode=episode,
+            type=type_ch, name=name, year=year, episode=episode, episode_name=episode_name,
             date=date, rating=rating, intro=intro, tmdb_url=tmdb_url
         )
         
@@ -60,6 +61,7 @@ class BaseChannel:
             "name": name,
             "year": year,
             "episode": episode,
+            "episode_name": episode_name,
             "date": date,
             "rating": rating,
             "intro": intro,
