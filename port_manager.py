@@ -125,8 +125,8 @@ class PortServer:
                 msg = await self._queue.get()
                 try:
                     if my_utils.contains_unicode_escape(msg):
-                        # 处理 Unicode 转义序列，使用 surrogateescape 避免编码错误
-                        msg = msg.encode("utf-8", errors="surrogateescape").decode("unicode_escape", errors="surrogateescape")
+                        # json.loads 原生处理 surrogate 对，json.dumps 确保安全编码
+                        msg = json.dumps(json.loads(msg), ensure_ascii=False)
                     media.process_media(msg, self.port_id)
                 except Exception as e:
                     log.logger.error(

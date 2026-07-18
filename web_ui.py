@@ -703,8 +703,8 @@ BASE_TEMPLATE = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - Emby Notifier</title>
-    <link href="https://cdn.bootcss.com/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.bootcss.com/bootstrap-icons/1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root {
             --sidebar-width: 240px;
@@ -780,7 +780,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
         {content}
     </div>
 
-    <script src="https://cdn.bootcss.com/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/bootstrap.bundle.min.js"></script>
     <script>
         // API helper
         async function api(url, method='GET', body=null) {
@@ -1798,7 +1798,7 @@ TEMPLATES_CONTENT = """
                         </div>
                         <div class="mb-3">
                             <label class="form-label">\u63cf\u8ff0\u6a21\u677f</label>
-                            <textarea class="form-control" id="editTemplateDesc" rows="6" placeholder="\u652f\u6301\u53d8\u91cf\uff1a{type} {name} {year} {episode} {date} {rating} {intro} {tmdb_url} {season} {ep_num} {ep_name}"></textarea>
+                            <textarea class="form-control" id="editTemplateDesc" rows="6" placeholder="\u652f\u6301\u53d8\u91cf\uff1a{type} {name} {year} {episode} {episode_name} {date} {rating} {intro} {tmdb_url}"></textarea>
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -1828,13 +1828,11 @@ TEMPLATES_CONTENT = """
                             <code>{name}</code> \u540d\u79f0
                             <code>{year}</code> \u5e74\u4efd
                             <code>{episode}</code> \u5b63\u00b7\u96c6\uff08\u4ec5\u5267\u96c6\u6709\u503c\uff09
+                            <code>{episode_name}</code> \u5355\u96c6\u540d\u79f0\uff08\u4ec5\u5267\u96c6\u6709\u503c\uff09
                             <code>{date}</code> \u4e0a\u6620\u65e5\u671f
                             <code>{rating}</code> \u8bc4\u5206
                             <code>{intro}</code> \u7b80\u4ecb
                             <code>{tmdb_url}</code> TMDB\u94fe\u63a5
-                            <code>{season}</code> \u5b63\u53f7
-                            <code>{ep_num}</code> \u96c6\u53f7
-                            <code>{ep_name}</code> \u96c6\u540d
                         </div>
                     </div>
                     <div class="modal-footer">
