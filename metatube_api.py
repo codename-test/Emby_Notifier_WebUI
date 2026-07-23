@@ -3,6 +3,11 @@
 """
 MetaTube API 客户端
 调用 MetaTube Server 获取影片元数据
+
+图片获取策略（逐级退避）：
+  1. 原始 cover_url — 如果非防盗链域名，直接使用
+  2. DMM/JAV321 源封面 — 搜索结果中优先选可外链的源
+  3. 剧照 preview_images[0] — 保底方案
 """
 
 import re
@@ -17,7 +22,7 @@ import db
 
 def get_config():
     """从数据库读取 MetaTube 配置"""
-    config = db.get_all_config()
+    config = db.get_all_system_config()
     server = config.get("METATUBE_SERVER", "").strip()
     token = config.get("METATUBE_TOKEN", "").strip()
     return server, token
@@ -146,11 +151,171 @@ def get_movie_detail(provider, movie_id):
 
 
 # ─────────────────────────────────────────────
+#  Image URL — 逐级退避策略
+# ──────────────────────────────────────────────
+
+# 已知防盗链的域名（这些域名的图片外部无法访问）
+_BLOCKED_DOMAINS = [
+    "www.javbus.com",
+    "www.javdb.com",
+    "javbus.com",
+    "javdb.com",
+]
+
+# 已知可外链的封面源（优先选用）
+_ACCESSIBLE_COVER_PROVIDERS = ["JAV321", "FANZA"]
+
+
+def _is_blocked_url(url):
+    """检查 URL 是否在防盗链域名列表中"""
+    if not url:
+        return False
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in _BLOCKED_DOMAINS)
+
+
+def _find_accessible_cover(results):
+    """从搜索结果中查找可外链的封面源（DMM/FANZA/JAV321）
+    
+    Args:
+        results: 搜索结果列表
+    
+    Returns:
+        dict: 影片详情（含可访问的 cover_url），或 None
+    """
+    # 按优先级排序：先试 ACCESSIBLE_COVER_PROVIDERS 里的源
+    for preferred in _ACCESSIBLE_COVER_PROVIDERS:
+        for result in results:
+            if result.get("provider", "").upper() == preferred.upper():
+                cover = result.get("cover_url", "")
+                if cover and not _is_blocked_url(cover):
+                    provider = result.get("provider", "")
+                    movie_id = result.get("id", "")
+                    if provider and movie_id:
+                        try:
+                            detail = get_movie_detail(provider, movie_id)
+                            if detail and not _is_blocked_url(detail.get("cover_url", "")):
+                                log.logger.debug(
+                                    f"MetaTube: Found accessible cover from {provider}: "
+                                    f"{detail.get('cover_url', '')}"
+                                )
+                                return detail
+                        except Exception as e:
+                            log.logger.debug(f"MetaTube: {provider} detail failed: {e}")
+                            continue
+    
+    # 遍历所有结果，找第一个 cover_url 不在黑名单里的
+    for result in results:
+        cover = result.get("cover_url", "")
+        if cover and not _is_blocked_url(cover):
+            provider = result.get("provider", "")
+            movie_id = result.get("id", "")
+            if provider and movie_id:
+                try:
+                    detail = get_movie_detail(provider, movie_id)
+                    if detail and not _is_blocked_url(detail.get("cover_url", "")):
+                        log.logger.debug(
+                            f"MetaTube: Found accessible cover from {provider}: "
+                            f"{detail.get('cover_url', '')}"
+                        )
+                        return detail
+                except Exception as e:
+                    log.logger.debug(f"MetaTube: {provider} detail failed: {e}")
+                    continue
+    
+    return None
+
+
+def _fallback_to_preview(detail):
+    """用剧照（preview_images）作为封面保底
+    
+    Args:
+        detail: 影片详情 dict（会被原地修改）
+    
+    Returns:
+        dict: 修改后的 detail
+    """
+    if not detail:
+        return detail
+    
+    previews = detail.get("preview_images", [])
+    if previews and len(previews) > 0:
+        new_url = previews[0]
+        log.logger.info(f"MetaTube: Using preview image as cover (fallback): {new_url}")
+        detail["cover_url"] = new_url
+        detail["big_cover_url"] = new_url
+    else:
+        log.logger.warning("MetaTube: No preview_images available for fallback, cover will be empty")
+        detail["cover_url"] = ""
+        detail["big_cover_url"] = ""
+    
+    # 清理 thumb_url 如果也是防盗链
+    if _is_blocked_url(detail.get("thumb_url", "")):
+        detail["thumb_url"] = detail.get("cover_url", "")
+    
+    return detail
+
+
+def _resolve_cover_url(detail, keyword=None, search_results=None):
+    """逐级退避解析封面 URL
+    
+    优先级：
+      1. 原始 cover_url 可用 → 直接用
+      2. 搜索 DMM/JAV321 源的封面 → 用其详情替换
+      3. preview_images[0] 剧照 → 保底
+    
+    Args:
+        detail: 已获取的影片详情
+        keyword: 搜索关键词（用于降级搜索）
+        search_results: 已有的搜索结果（避免重复请求）
+    
+    Returns:
+        dict: 处理后的 detail
+    """
+    if not detail:
+        return detail
+    
+    cover_url = detail.get("cover_url", "")
+    
+    # Level 1: cover_url 可用，直接用
+    if cover_url and not _is_blocked_url(cover_url):
+        log.logger.debug(f"MetaTube: Using original cover_url: {cover_url}")
+        return detail
+    
+    # cover_url 被封或为空，进入退避
+    if cover_url:
+        log.logger.warning(f"MetaTube: cover_url blocked ({cover_url}), trying fallback...")
+    
+    # Level 2: 尝试找可外链的封面源
+    results = search_results
+    if results is None and keyword:
+        try:
+            results = search_movie(keyword)
+        except Exception as e:
+            log.logger.debug(f"MetaTube: Search for accessible cover failed: {e}")
+            results = []
+    
+    if results:
+        accessible = _find_accessible_cover(results)
+        if accessible:
+            return accessible
+    
+    # Level 3: 剧照保底
+    log.logger.warning("MetaTube: No accessible cover found, using preview image as fallback")
+    return _fallback_to_preview(detail)
+
+
+# ─────────────────────────────────────────────
 #  High-level Fetch
 # ──────────────────────────────────────────────
 
 def fetch_movie(item):
     """获取影片元数据（自动选择搜索或直接查询）
+    
+    图片采用逐级退避策略：
+      1. 原始 cover_url 可用 → 直接用
+      2. DMM/JAV321 源的封面 → 替换
+      3. preview_images[0] 剧照 → 保底
     
     Args:
         item: webhook 中的 Item 对象
@@ -165,13 +330,16 @@ def fetch_movie(item):
         return None
     
     try:
+        keyword = None
+        
         if mode == "direct":
             # 直接查询详情
             provider, movie_id = value
             detail = get_movie_detail(provider, movie_id)
-            if detail and detail.get("cover_url"):
-                return detail
-            log.logger.warning(f"MetaTube direct query returned no cover: {provider}/{movie_id}")
+            if detail:
+                keyword = movie_id
+                return _resolve_cover_url(detail, keyword=keyword)
+            log.logger.warning(f"MetaTube direct query returned nothing: {provider}/{movie_id}")
             # 降级到搜索
             keyword = movie_id
         else:
@@ -191,7 +359,7 @@ def fetch_movie(item):
                 if provider and movie_id:
                     detail = get_movie_detail(provider, movie_id)
                     if detail:
-                        return detail
+                        return _resolve_cover_url(detail, keyword=keyword, search_results=results)
         
         # 兜底：取第一个结果
         first = results[0]
@@ -200,7 +368,7 @@ def fetch_movie(item):
         if provider and movie_id:
             detail = get_movie_detail(provider, movie_id)
             if detail:
-                return detail
+                return _resolve_cover_url(detail, keyword=keyword, search_results=results)
         
         log.logger.warning("MetaTube: All results failed to fetch detail")
         return None

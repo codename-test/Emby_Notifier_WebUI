@@ -53,6 +53,8 @@ class BaseChannel:
             date=date, rating=rating, intro=intro, tmdb_url=tmdb_url
         )
         
+        log.logger.info(f"render_content: picurl={picurl}")
+        
         return {
             "title": title,
             "description": description,

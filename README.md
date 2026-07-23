@@ -17,6 +17,20 @@
 | Telegram Bot | 通过 Telegram Bot API 推送（HTML 格式） |
 | Bark | 通过 Bark 推送 iOS 通知 |
 
+### MetaTube 集成
+
+集成 [MetaTube Server](https://metatube-community.github.io/) 作为扩展元数据源。当 TMDB 无法匹配到影片信息时，自动降级使用 MetaTube 补充数据。
+
+**图片获取策略（逐级退避）：**
+
+| 优先级 | 来源 | 说明 |
+|--------|------|------|
+| 1 | 原始封面 | 非防盗链域名直接使用 |
+| 2 | DMM/JAV321 源封面 | 搜索结果中优先选可外链源 |
+| 3 | 剧照 (preview_images) | 保底方案 |
+
+在 **系统设置** 页面配置 MetaTube Server 地址和 Token 即可启用。
+
 ### WebUI 管理界面
 
 - **仪表盘**：系统状态概览、端口运行状态
@@ -26,11 +40,11 @@
 - **勿扰设置**：设置勿扰时间段，期间消息自动暂存到队列
 - **消息队列**：查看历史消息，手动重推，清空队列
 - **系统日志**：实时查看日志，按级别过滤（DEBUG/INFO/WARNING/ERROR/CRITICAL）
-- **系统设置**：TMDB Token、日志等级配置
+- **系统设置**：TMDB Token、MetaTube Server、翻译引擎、日志等级配置
 
 ### 推送模板系统
 
-- **标准模板**：带封面图，完整 TMDB 数据（简介、评分、链接）
+- **标准模板**：带封面图，完整 TMDB/MetaTube 数据（简介、评分、链接）
 - **基础模板**：TMDB 失败时自动使用，无图，仅 webhook 自带数据
 - **自定义模板**：用户可自由编辑模板格式
 
@@ -91,10 +105,11 @@ python3 main.py
 ### 配置流程
 
 1. 访问 WebUI → **系统设置** → 填写 TMDB API Token → 保存并测试连接
-2. **推送通道** → 添加推送通道（企微应用/机器人、钉钉、飞书、Telegram、Bark）
-3. **推送模板** → 选用标准或基础模板（可自定义格式）
-4. **端口管理** → 添加端口，选择推送通道和推送模板，启用
-5. Emby/Jellyfin 控制台 → 设置 Webhook URL：`http://你的IP:端口号/`
+2. **系统设置** → 配置 MetaTube Server（可选，扩展元数据源）
+3. **推送通道** → 添加推送通道（企微应用/机器人、钉钉、飞书、Telegram、Bark）
+4. **推送模板** → 选用标准或基础模板（可自定义格式）
+5. **端口管理** → 添加端口，选择推送通道和推送模板，启用
+6. Emby/Jellyfin 控制台 → 设置 Webhook URL：`http://你的IP:端口号/`
 
 ## 环境变量
 
@@ -136,6 +151,8 @@ Emby_Notifier/
 ├── sender.py            # 推送发送器（多通道架构）
 ├── tmdb_api.py          # TMDB API
 ├── tvdb_api.py          # TVDB API
+├── metatube_api.py      # MetaTube API（扩展元数据源）
+├── translator.py        # 翻译模块（Google/百度）
 ├── channels/            # 多通道模块
 │   ├── __init__.py      # 基类 + 工厂模式
 │   ├── wechat_work_api.py   # 企业微信应用
@@ -155,7 +172,8 @@ Emby_Notifier/
 
 ## 致谢
 
-本项目基于 [Emby Notifier](https://github.com/Ccccx159/Emby_Notifier) 二次开发，感谢原作者。
+- 基于 [Emby Notifier](https://github.com/Ccccx159/Emby_Notifier) 二次开发，感谢原作者
+- 扩展元数据由 [MetaTube](https://metatube-community.github.io/) 提供支持
 
 ## License
 

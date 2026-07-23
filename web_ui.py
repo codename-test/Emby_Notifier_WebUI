@@ -1520,8 +1520,13 @@ SETTINGS_CONTENT = """
                 <form id="metatubeForm">
                     <div class="mb-3">
                         <label class="form-label">MetaTube Server <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="metatubeServer" placeholder="https://test0914.koyeb.app/" value="{{ config.get('METATUBE_SERVER', '') }}">
-                        <div class="form-text">MetaTube Server 的完整 URL，用于获取影片元数据（番号、封面、简介等）。</div>
+                        <input type="text" class="form-control" id="metatubeServer" placeholder="https://your-metatube-server.example.com/" value="{{ config.get('METATUBE_SERVER', '') }}">
+                        <div class="form-text">
+                            MetaTube Server 的完整 URL，用于获取影片元数据（番号、封面、简介等）。
+                            <a href="https://metatube-community.github.io/" target="_blank" rel="noopener">
+                                <i class="bi bi-box-arrow-up-right"></i> 了解 MetaTube Server 部署与配置
+                            </a>
+                        </div>
                     </div>
                     
                     <div class="mb-3">
@@ -1682,7 +1687,7 @@ SETTINGS_JS = """
           
           showToast('正在保存 MetaTube 配置...', 'info');
           const res = await apiPost('/api/config', config);
-          if (res.success) {
+          if (res.status === 'saved') {
               showToast('MetaTube 配置已保存');
           } else {
               showToast('保存失败：' + (res.error || '未知错误'), 'danger');

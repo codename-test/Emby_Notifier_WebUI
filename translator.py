@@ -18,7 +18,7 @@ import db
 
 def get_config():
     """从数据库读取翻译配置"""
-    config = db.get_all_config()
+    config = db.get_all_system_config()
     enabled = config.get("TRANSLATION_ENABLED", "0") == "1"
     engine = config.get("TRANSLATION_ENGINE", "google_free").lower()
     baidu_app_id = config.get("BAIDU_APP_ID", "").strip()
