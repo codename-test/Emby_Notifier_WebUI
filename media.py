@@ -413,14 +413,44 @@ def _fetch_and_send(emby_data, port_id):
         try:
             media_obj.get_details()
         except Exception as e:
-            log.logger.warning(f"[Port {port_id}] TMDB fetch failed: {e}, using fallback template")
-            media_obj.media_detail_["tmdb_failed"] = True
-            media_obj.media_detail_["skip_tmdb"] = False
-            media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
-            media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
-            media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
-            media_obj.media_detail_["media_rating"] = emby_data.get("CommunityRating", 0) or 0
-            media_obj.media_detail_["media_tmdburl"] = ""
+            log.logger.warning(f"[Port {port_id}] TMDB fetch failed: {e}, trying MetaTube...")
+            # 尝试 MetaTube 降级
+            try:
+                import metatube_api
+                import translator
+                detail = metatube_api.fetch_movie(emby_data)
+                if detail:
+                    # 翻译
+                    detail = translator.translate_movie_data(detail)
+                    # 填充数据
+                    media_obj.media_detail_["tmdb_failed"] = False
+                    media_obj.media_detail_["skip_tmdb"] = False
+                    media_obj.media_detail_["media_name"] = detail.get("title", media_obj.info_.get("Name", ""))
+                    media_obj.media_detail_["media_rel"] = detail.get("release_date", str(media_obj.info_.get("PremiereYear", "")))
+                    media_obj.media_detail_["media_intro"] = detail.get("summary", emby_data.get("Overview", ""))
+                    media_obj.media_detail_["media_rating"] = detail.get("score", 0) or 0
+                    media_obj.media_detail_["media_poster"] = detail.get("cover_url", "")
+                    media_obj.media_detail_["media_backdrop"] = detail.get("cover_url", "")
+                    media_obj.media_detail_["media_tmdburl"] = detail.get("homepage", "")
+                    log.logger.info(f"[Port {port_id}] MetaTube fetch success: {detail.get('title', 'N/A')}")
+                else:
+                    log.logger.warning(f"[Port {port_id}] MetaTube fetch failed, using fallback template")
+                    media_obj.media_detail_["tmdb_failed"] = True
+                    media_obj.media_detail_["skip_tmdb"] = False
+                    media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
+                    media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
+                    media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
+                    media_obj.media_detail_["media_rating"] = emby_data.get("CommunityRating", 0) or 0
+                    media_obj.media_detail_["media_tmdburl"] = ""
+            except Exception as mt_e:
+                log.logger.error(f"[Port {port_id}] MetaTube error: {mt_e}, using fallback template")
+                media_obj.media_detail_["tmdb_failed"] = True
+                media_obj.media_detail_["skip_tmdb"] = False
+                media_obj.media_detail_["media_name"] = media_obj.info_.get("Name", "")
+                media_obj.media_detail_["media_rel"] = str(media_obj.info_.get("PremiereYear", ""))
+                media_obj.media_detail_["media_intro"] = emby_data.get("Overview", "")
+                media_obj.media_detail_["media_rating"] = emby_data.get("CommunityRating", 0) or 0
+                media_obj.media_detail_["media_tmdburl"] = ""
             # fall through to push
 
     # 创建 Sender 并推送

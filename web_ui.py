@@ -1512,6 +1512,60 @@ SETTINGS_CONTENT = """
             </div>
         </div>
 
+        <div class="card mb-4">
+            <div class="card-header py-3">
+                <i class="bi bi-film me-2"></i>MetaTube 配置
+            </div>
+            <div class="card-body">
+                <form id="metatubeForm">
+                    <div class="mb-3">
+                        <label class="form-label">MetaTube Server <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="metatubeServer" placeholder="https://test0914.koyeb.app/" value="{{ config.get('METATUBE_SERVER', '') }}">
+                        <div class="form-text">MetaTube Server 的完整 URL，用于获取影片元数据（番号、封面、简介等）。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">MetaTube Token（可选）</label>
+                        <input type="text" class="form-control" id="metatubeToken" placeholder="留空则不认证" value="{{ config.get('METATUBE_TOKEN', '') }}">
+                        <div class="form-text">如果 MetaTube Server 设置了认证，填写访问令牌。</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="translationEnabled" {{ 'checked' if config.get('TRANSLATION_ENABLED', '0') == '1' }}>
+                            <label class="form-check-label" for="translationEnabled">启用翻译</label>
+                        </div>
+                        <div class="form-text">将日文/英文标题和简介翻译为中文。</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">翻译引擎</label>
+                        <select class="form-select" id="translationEngine">
+                            <option value="google_free" {{ 'selected' if config.get('TRANSLATION_ENGINE', 'google_free') == 'google_free' }}>Google (免费)</option>
+                            <option value="baidu" {{ 'selected' if config.get('TRANSLATION_ENGINE') == 'baidu' }}>百度翻译</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3" id="baiduConfig" style="display: none;">
+                        <label class="form-label">百度 App ID</label>
+                        <input type="text" class="form-control" id="baiduAppId" placeholder="百度翻译开放平台 App ID" value="{{ config.get('BAIDU_APP_ID', '') }}">
+                        <div class="form-text">
+                            <a href="https://fanyi-api.baidu.com/" target="_blank">申请百度翻译 API</a>
+                        </div>
+                    </div>
+
+                    <div class="mb-3" id="baiduKeyConfig" style="display: none;">
+                        <label class="form-label">百度 App Key</label>
+                        <input type="text" class="form-control" id="baiduAppKey" placeholder="百度翻译开放平台 App Key" value="{{ config.get('BAIDU_APP_KEY', '') }}">
+                    </div>
+
+                    <button type="button" class="btn btn-primary" onclick="saveMetatubeConfig()">
+                        <i class="bi bi-save me-2"></i>保存 MetaTube 配置
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-header py-3">
                 <i class="bi bi-info-circle-fill me-2"></i>使用说明
@@ -1598,7 +1652,43 @@ SETTINGS_JS = """
                 showToast('❌ TMDB 连接失败：' + (res.error || ''), 'danger');
             }
         }
-    </script>
+    
+
+      // MetaTube 配置
+      function toggleBaiduConfig() {
+          const engine = document.getElementById('translationEngine').value;
+          const show = engine === 'baidu';
+          document.getElementById('baiduConfig').style.display = show ? 'block' : 'none';
+          document.getElementById('baiduKeyConfig').style.display = show ? 'block' : 'none';
+      }
+      
+      document.getElementById('translationEngine').addEventListener('change', toggleBaiduConfig);
+      toggleBaiduConfig();  // 初始化
+      
+      async function saveMetatubeConfig() {
+          const config = {
+              METATUBE_SERVER: document.getElementById('metatubeServer').value.trim(),
+              METATUBE_TOKEN: document.getElementById('metatubeToken').value.trim(),
+              TRANSLATION_ENABLED: document.getElementById('translationEnabled').checked ? '1' : '0',
+              TRANSLATION_ENGINE: document.getElementById('translationEngine').value,
+              BAIDU_APP_ID: document.getElementById('baiduAppId').value.trim(),
+              BAIDU_APP_KEY: document.getElementById('baiduAppKey').value.trim()
+          };
+          
+          if (!config.METATUBE_SERVER) {
+              showToast('请输入 MetaTube Server 地址', 'danger');
+              return;
+          }
+          
+          showToast('正在保存 MetaTube 配置...', 'info');
+          const res = await apiPost('/api/config', config);
+          if (res.success) {
+              showToast('MetaTube 配置已保存');
+          } else {
+              showToast('保存失败：' + (res.error || '未知错误'), 'danger');
+          }
+      }
+</script>
 """
 
 
